@@ -24,8 +24,9 @@ Modal_Kind :: enum {
 	Quick_Switch,
 	Confirm_Delete, // Kanal löschen bestätigen (app.confirm_channel)
 	Msg_History,    // Bearbeitungsverlauf einer Nachricht (Sheet von rechts)
-	Settings,       // App-Einstellungen (Audio-Geräte + Selbsttest)
+	Settings,       // App-Einstellungen (Profil + Audio-Geräte + Selbsttest)
 	Admin,          // server administration (adminui.odin, admins only)
+	Avatar_Crop,    // Profilbild zuschneiden (avatarui.odin)
 }
 
 // Kontextmenü (Rechtsklick auf einen Kanal in der Sidebar).
@@ -92,6 +93,8 @@ App :: struct {
 	set_devices_out: []audio.Device,
 	set_devices_mic: []audio.Device,
 	set_dd:          int, // offenes Dropdown: 0 = keins, 1 = Mikro, 2 = Lautsprecher
+	set_scroll:      Scroll,
+	set_content_h:   f32, // Inhaltshöhe des letzten Frames (Scroll-Clamp)
 	mic_test:        bool,
 	mic_test_call:   bool, // Test läuft als Loopback in der CALL-Engine
 	test_engine:     audio.Engine,
@@ -105,6 +108,19 @@ App :: struct {
 
 	welcome_input: Text_Input,
 	welcome_error: string,
+
+	// Profilbild-Editor (avatarui.odin): Quelle + Crop-Zustand
+	av_img:             rl.Image,
+	av_tex:             rl.Texture2D,
+	av_loaded:          bool,
+	av_zoom:            f32,
+	av_pan:             rl.Vector2,
+	av_dragging:        bool,
+	av_last:            rl.Vector2,
+	av_slider_drag:     bool,
+	av_to_auth:         bool, // Ergebnis geht ins Registrier-Formular statt Upload
+	av_return_settings: bool, // nach dem Editor die Einstellungen wieder öffnen
+	av_uploading:       bool,
 
 	// Admin panel (adminui.odin): tab, inputs and inline confirmations.
 	adm_tab:         int,
@@ -270,6 +286,7 @@ app_poll :: proc(app: ^App) {
 	}
 	call_tick(app)          // Voice: Keepalive/HELLO-Retries, Trennung erkennen
 	settings_test_tick(app) // Audio-Tests: Ton-Ende, Test-Mute zurücknehmen
+	avatar_tick(app)        // Profilbild: Dateidialog-Ergebnis + Drag & Drop
 }
 
 conn_label :: proc(c: ^Server_Conn) -> string {
@@ -434,6 +451,10 @@ app_apply_reply :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire, p: Pending) 
 		sync.unlock(&c.mu)
 		app_sync_config(app, c)
 		app.ui.focus = w.setup_needed ? .Setup_Name : .Message
+		// Im Registrier-Formular gewähltes Profilbild jetzt hochladen
+		if p.kind == shared.K_REGISTER {
+			avatar_send_pending_auth(app, c)
+		}
 
 	case shared.K_SETUP:
 		if !w.ok {
@@ -590,6 +611,35 @@ app_apply_reply :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire, p: Pending) 
 		rtt := f32(mono_ms() - c.rtt_sent)
 		// Geglättet, damit die Anzeige nicht zappelt (erster Wert direkt)
 		c.rtt_ms = c.rtt_ms <= 0 ? rtt : c.rtt_ms*0.6 + rtt*0.4
+
+	case shared.K_AVATAR_GET:
+		avatar_apply_get(c, w, p)
+
+	case shared.K_AVATAR_SET:
+		app.av_uploading = false
+		if !w.ok {
+			delete(c.av_upload_png)
+			c.av_upload_png = nil
+			toast(app, .Error, fmt.tprintf("Profilbild nicht gespeichert: %s", translate_err(w.err)))
+			return
+		}
+		app_upsert_user(c, w.user)
+		if len(c.av_upload_png) > 0 {
+			// Das eigene Bild liegt schon lokal vor — direkt in den Cache,
+			// kein Roundtrip über avatar_get nötig.
+			avatar_cache_put(c, c.me.id, w.user.avatar, c.av_upload_png)
+			delete(c.av_upload_png)
+			c.av_upload_png = nil
+		}
+		toast(app, .Success, "Profilbild gespeichert")
+
+	case shared.K_AVATAR_DELETE:
+		if !w.ok {
+			toast(app, .Error, translate_err(w.err))
+			return
+		}
+		app_upsert_user(c, w.user)
+		toast(app, .Info, "Profilbild entfernt")
 
 	case shared.K_ADMIN_STATE, shared.K_ADMIN_SET, shared.K_ADMIN_SET_ROLE,
 	     shared.K_ADMIN_SET_DISABLED, shared.K_ADMIN_CREATE_USER,

@@ -99,6 +99,12 @@ handle_wire :: proc(c: ^Client_Conn, w: shared.Wire) {
 			handle_edit_message(c, w)
 		case shared.K_MESSAGE_HISTORY:
 			handle_message_history(c, w)
+		case shared.K_AVATAR_SET:
+			handle_avatar_set(c, w)
+		case shared.K_AVATAR_DELETE:
+			handle_avatar_delete(c, w)
+		case shared.K_AVATAR_GET:
+			handle_avatar_get(c, w)
 		case shared.K_CALL_JOIN:
 			handle_call_join(c, w)
 		case shared.K_CALL_LEAVE:

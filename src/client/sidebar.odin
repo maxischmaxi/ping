@@ -247,7 +247,7 @@ draw_sidebar :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase, sh: f32) {
 		if rclicked && dm != nil {
 			ctx_open(app, dm.ch.id)
 		}
-		draw_avatar(app, u.username, x + 18, y + 4, 22, presence = true, online = u.online)
+		draw_avatar(app, u.username, x + 18, y + 4, 22, presence = true, online = u.online, c = c, uid = u.id)
 		label := u.display_name != "" ? u.display_name : u.username
 		col := is_active ? COL_PRIMARY_FG : (u.online ? COL_SIDEBAR_TEXT : COL_SIDEBAR_DIM)
 		font := app.fonts.regular15
@@ -277,7 +277,7 @@ draw_sidebar :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase, sh: f32) {
 		fy := sh - FOOTER_H
 		rl.DrawRectangleRec({RAIL_W, fy, SIDEBAR_W, FOOTER_H}, COL_RAIL_BG)
 		rl.DrawLineEx({RAIL_W, fy}, {RAIL_W + SIDEBAR_W, fy}, 1, COL_SIDEBAR_LINE)
-		draw_avatar(app, c.me.username, RAIL_W + 14, fy + (FOOTER_H - 32)/2, 32, presence = true, online = true)
+		draw_avatar(app, c.me.username, RAIL_W + 14, fy + (FOOTER_H - 32)/2, 32, presence = true, online = true, c = c, uid = c.me.id)
 		label := c.me.display_name != "" ? c.me.display_name : c.me.username
 		draw_text(app.fonts.bold15, tcstr(label), {RAIL_W + 56, fy + 11}, 15, 0, COL_TEXT)
 		sub := c.me.is_admin ? fmt.tprintf("@%s · Admin", c.me.username) : fmt.tprintf("@%s", c.me.username)

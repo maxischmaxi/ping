@@ -45,9 +45,10 @@ src/shared/     Wire-Protokoll (JSON), Framing, Noise-Secure-Channel, Voice-Pake
 src/server/     Server: Auth, Channels/DMs, verschlüsselte Persistenz, Voice-SFU
 src/client/     raylib-Client: Slack-Layout, Multi-Server, Rich-Text, Call-UI
 src/audio/      Voice-DSP: Opus/RNNoise/Speex-Bindings, Jitter-Buffer, Engine
-tests/smoke/    Headless-Protokolltest inkl. UDP-SFU (gegen frischen Server)
+tests/smoke/    Headless-Protokolltest inkl. UDP-SFU + Profilbilder (frischer Server)
 tests/persist/  Persistenz-Test (Server-Neustart gegen Smoke-Datenbestand)
 tests/audio/    Headless-DSP-Test (Opus-Roundtrip, FEC/PLC, Jitter, VAD, AEC)
+tests/avatar/   Headless-Test der Profilbild-Pipeline (PNG-Export/Crop/Resize)
 tests/audiodev/ Geräte-Check mit echter Audio-Hardware (nicht für CI)
 assets/fonts/   Inter + Liberation Mono (werden ins Client-Binary eingebettet)
 packaging/      CI-Buildscripts, PKGBUILD, Homebrew-Formula, macOS-Bundle
@@ -60,8 +61,10 @@ docs/           Release-, Homebrew- und Distributions-Doku
 odin build tests/smoke -out:bin/smoke
 odin build tests/persist -out:bin/persist
 odin build tests/audio -out:bin/audiotest
+odin build tests/avatar -out:bin/avatartest
 
 bin/audiotest                                            # reine DSP-Pipeline
+bin/avatartest                                           # Profilbild-Bake-Kette
 bin/flurfunk-server -port 7999 -data /tmp/flurfunk-test &  # frisches Datenverzeichnis!
 timeout 30 bin/smoke 127.0.0.1:7999
 # Server neu starten (gleiches -data), dann:
@@ -93,7 +96,9 @@ serverseitig verschlüsselt lagern.
   liegen nur „gewrappt" (verschlüsselt unter dem **Master-Key**) auf der
   Platte. Der Master-Key (`master.key`, 32 Byte, `0600`) kann per `-key` auf
   ein separates Medium gelegt werden — dann sind Datenverzeichnis und
-  Schlüssel physisch getrennt.
+  Schlüssel physisch getrennt. Profilbilder liegen ebenfalls verschlüsselt
+  (XChaCha20-Poly1305 unter dem Master-Key, User-ID als AAD) in
+  `avatars/<id>.bin` — auch Gesichter sind Daten.
 - **Passwörter:** Argon2id (64 MiB, 3 Passes) mit zufälligem Salt.
 - **Sitzungen:** zufällige 256-Bit-Tokens.
 - **Zugangskontrolle:** Wer sich als erste Person registriert, wird

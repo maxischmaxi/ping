@@ -17,6 +17,7 @@ open_settings :: proc(app: ^App) {
 		return
 	}
 	settings_refresh_devices(app)
+	scroll_to(&app.set_scroll, 0)
 	open_modal(app, .Settings)
 }
 
@@ -265,13 +266,18 @@ toggle_row :: proc(app: ^App, x, y, w: f32, title, desc: string, value: ^bool, i
 	return 46
 }
 
-draw_settings_modal :: proc(app: ^App, sw, sh: f32) {
-	h := min(f32(560), sh - 40)
+draw_settings_modal :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
+	h := min(f32(680), sh - 40)
 	p := modal_frame(app, sw, sh, 560, h, "Einstellungen")
 
 	x := p.x + 24
 	w := p.width - 48
-	y := p.y + 52
+
+	// Inhalt scrollt zwischen Titel und Fußzeile (der Dialog ist höher als
+	// kleine Fenster). Die Inhaltshöhe stammt aus dem letzten Frame.
+	view := rl.Rectangle{p.x, p.y + 48, p.width, p.height - 48 - 62}
+	scroll_update(app, &app.set_scroll, ui_hover(&app.ui, view, .Modal),
+		max(0, app.set_content_h - view.height), 44)
 
 	// Offenes Dropdown → Klicks auf die darunterliegenden Widgets abschirmen
 	// (die Liste zeichnet und klickt am Ende dieses Frames).
@@ -280,6 +286,13 @@ draw_settings_modal :: proc(app: ^App, sw, sh: f32) {
 	if shield {
 		app.ui.clicked = false
 	}
+
+	scissor_begin(view.x, view.y, view.width, view.height)
+	y := view.y + 4 - app.set_scroll.pos
+	content_top := y
+
+	y += draw_settings_profile(app, c, x, y, w)
+	y += 18
 
 	draw_text(app.fonts.bold13, "AUDIO", {x, y}, 13, 0, COL_TEXT_FAINT)
 	y += 22
@@ -371,8 +384,14 @@ draw_settings_modal :: proc(app: ^App, sw, sh: f32) {
 	}
 	draw_text(app.fonts.regular13, tcstr(trim_label(app, app.fonts.regular13, 13, spk_hint, w - 184)),
 		{x + 184, y + 11}, 13, 0, COL_TEXT_FAINT)
+	y += 40
 
-	// Schließen
+	app.set_content_h = y - content_top
+	scissor_end()
+	scrollbar(app, view, app.set_content_h, &app.set_scroll, .Modal)
+
+	// Fußzeile: Hairline + Schließen
+	rl.DrawLineEx({p.x + 1, p.y + h - 62}, {p.x + p.width - 1, p.y + h - 62}, 1, COL_BORDER_SOFT)
 	if button(app, {p.x + p.width - 136, p.y + h - 50, 112, 36}, "Schließen", .Modal, id_salt = 0xC105E) {
 		close_modal(app)
 	}

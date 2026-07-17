@@ -24,6 +24,10 @@ User :: struct {
 	disabled:     bool, // disabled accounts cannot sign in
 	last_ip:      string, // IP of the last successful auth (admin panel)
 	last_seen_ms: i64,
+	avatar_ver:   u64, // Profilbild-Version (0 = keins), Datei siehe storage
+	avatar_max:   u64, // höchste je vergebene Version — Versionen dürfen sich
+	                   // nie wiederholen, sonst nagelt ein Client-Cache nach
+	                   // Löschen + Neu-Upload das alte Bild fest
 	salt:         [SALT_LEN]byte,
 	pass_hash:    [HASH_LEN]byte,
 }
@@ -223,6 +227,7 @@ wire_user :: proc(u: ^User) -> shared.User {
 		disabled     = u.disabled,
 		online       = user_online(u.id),
 		in_call      = call_user_active(u.id),
+		avatar       = u.avatar_ver,
 	}
 }
 
