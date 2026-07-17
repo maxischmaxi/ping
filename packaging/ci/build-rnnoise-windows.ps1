@@ -24,6 +24,18 @@ $model = "rnnoise_data-$modelVersion.tar.gz"
 Invoke-WebRequest -Uri "https://media.xiph.org/rnnoise/models/$model" -OutFile $model
 tar xf $model
 
+# vec.h includes os_support.h, which the 0.2 tag doesn't ship — provide the
+# opus memory macros it needs (same shim as packaging/ci/build-audio-deps.sh).
+@'
+#ifndef OS_SUPPORT_H
+#define OS_SUPPORT_H
+#include <string.h>
+#define OPUS_COPY(dst, src, n) (memcpy((dst), (src), (n)*sizeof(*(dst))))
+#define OPUS_MOVE(dst, src, n) (memmove((dst), (src), (n)*sizeof(*(dst))))
+#define OPUS_CLEAR(dst, n) (memset((dst), 0, (n)*sizeof(*(dst))))
+#endif
+'@ | Set-Content -Encoding ascii "src/os_support.h"
+
 # Library sources only (scalar path; no x86 RTCD, so no CPU dispatch/map
 # files needed). Excludes the demo/dump programs that carry their own main().
 $sources = @(
