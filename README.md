@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="assets/icon/flurfunk.svg" width="112" alt="Flurfunk-Icon">
-</p>
-
-# Flurfunk
+<h1 align="center">
+  <img src="assets/flurfunk-readme.png" width="520" alt="Flurfunk">
+</h1>
 
 **Dein Team. Dein Server. Deine Daten.**
 

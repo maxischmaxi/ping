@@ -141,9 +141,11 @@ Homebrew ziehen nach.
 
 ## App-Icon
 
-Quelle liegt unter `assets/icon/` (`flurfunk.svg` = Full-Bleed für
-Linux/README/Fenster-Icon, `flurfunk-macos.svg` = Big-Sur-Variante mit
-Rand und Schatten). Nach Änderungen `assets/icon/generate.sh` ausführen —
+Quelle liegt unter `assets/icon/` (`flurfunk.svg` = FF-Monogramm auf
+dunkler Kachel für Linux/Fenster-Icon, `flurfunk-macos.svg` = Big-Sur-
+Variante mit Rand und Schatten, `flurfunk-mark.svg` = freistehendes
+FF-Monogramm ohne Kachel; die README-Wortmarke liegt als
+`assets/flurfunk-readme.png`). Nach Änderungen `assets/icon/generate.sh` ausführen —
 das rendert die PNGs neu und packt `packaging/macos/flurfunk.icns`
 (braucht `rsvg-convert` und `python3`). Alle Artefakte sind eingecheckt;
 die CI rendert nichts selbst.
