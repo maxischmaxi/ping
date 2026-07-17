@@ -1,6 +1,6 @@
 package main
 
-// Config-Persistenz: ~/.config/ping/client.json (XDG_CONFIG_HOME respektiert).
+// Config-Persistenz: ~/.config/flurfunk/client.json (XDG_CONFIG_HOME respektiert).
 
 import "core:encoding/hex"
 import "core:encoding/json"
@@ -21,16 +21,44 @@ Config :: struct {
 	device_key: string                  `json:"device_key"`, // hex(32B X25519-Private)
 	ui_scale:   f32                     `json:"ui_scale,omitempty"`, // UI-Zoom (Strg +/-), 0 = Standard
 	theme:      string                  `json:"theme,omitempty"`, // "system" (Default) | "light" | "dark"
+
+	// Audio (Settings-Dialog). Geräte per Name ("" = Systemstandard);
+	// die Schalter sind negativ benannt, damit der Nullwert = Default (an).
+	audio_mic:   string `json:"audio_mic,omitempty"`,
+	audio_out:   string `json:"audio_out,omitempty"`,
+	denoise_off: bool   `json:"denoise_off,omitempty"`,
+	aec_off:     bool   `json:"aec_off,omitempty"`,
+	gate_off:    bool   `json:"gate_off,omitempty"`,
+
 	servers:    [dynamic]Config_Server `json:"servers"`,
 }
 
 config_dir :: proc(allocator := context.allocator) -> string {
 	xdg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
 	if xdg != "" {
-		return fmt.aprintf("%s/ping", xdg, allocator = allocator)
+		return fmt.aprintf("%s/flurfunk", xdg, allocator = allocator)
 	}
 	home := os.get_env("HOME", context.temp_allocator)
-	return fmt.aprintf("%s/.config/ping", home, allocator = allocator)
+	return fmt.aprintf("%s/.config/flurfunk", home, allocator = allocator)
+}
+
+// One-time migration: adopt the old "ping" config dir if the new one is absent.
+config_migrate :: proc() {
+	new_dir := config_dir(context.temp_allocator)
+	if os.exists(new_dir) {
+		return
+	}
+	old_dir: string
+	xdg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+	if xdg != "" {
+		old_dir = fmt.tprintf("%s/ping", xdg)
+	} else {
+		home := os.get_env("HOME", context.temp_allocator)
+		old_dir = fmt.tprintf("%s/.config/ping", home)
+	}
+	if os.exists(old_dir) {
+		_ = os.rename(old_dir, new_dir)
+	}
 }
 
 config_path :: proc(allocator := context.allocator) -> string {
@@ -38,6 +66,7 @@ config_path :: proc(allocator := context.allocator) -> string {
 }
 
 config_load :: proc() -> Config {
+	config_migrate()
 	cfg: Config
 	path := config_path(context.temp_allocator)
 	data, err := os.read_entire_file(path, context.allocator)

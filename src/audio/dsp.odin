@@ -27,6 +27,14 @@ GATE_HOLD_FRAMES :: 40 // 400 ms
 GATE_ATTACK :: f32(0.45) // schnell auf
 GATE_RELEASE :: f32(0.06) // sanft zu
 
+// AEC-Referenz-FIFO (10-ms-Frames). Der Worker füttert Playback burstweise
+// (60 ms Vorlauf am Stück) — deshalb puffern WIR die Referenz und geben
+// speex_echo_cancellation pro Capture-Frame den zeitlich passenden
+// Playback-Frame. Ziel-Vorlauf ≈ Playback-Ring (60 ms); läuft der Puffer
+// weiter voraus (Toggle, Gerätewechsel), fallen die ältesten Frames weg.
+REF_FRAMES :: 12 // 120 ms Kapazität
+REF_MAX_LEAD :: 8 // > 80 ms Vorlauf → auf Ziel zurückstutzen
+
 Processor :: struct {
 	enc:         ^Opus_Encoder,
 	dn:          ^Denoise_State,
@@ -40,11 +48,15 @@ Processor :: struct {
 	pcm20:       [FRAME_20MS]f32,
 	pcm_fill:    int,
 	denoise_on:  bool,
-	ref_fresh:   int, // >0 = AEC hat frische Playback-Referenz
+	aec_on:      bool,
+	gate_on:     bool, // aus → Gate dauerhaft offen (Opus-DTX greift trotzdem)
+	// AEC-Referenz: Ring aus 10-ms-Frames (nur der Worker-Thread greift zu)
+	ref_buf:     [REF_FRAMES][FRAME_10MS]i16,
+	ref_r:       int,
+	ref_w:       int,
 	// Kratzer: Wiederverwendete Puffer (keine Allocs im Takt)
 	scratch_i16: [FRAME_10MS]i16,
 	scratch_out: [FRAME_10MS]i16,
-	scratch_ref: [FRAME_10MS]i16,
 	scratch_f32: [FRAME_10MS]f32,
 }
 
@@ -72,6 +84,8 @@ processor_init :: proc(p: ^Processor) -> bool {
 	speex_echo_ctl(p.aec, SPEEX_ECHO_SET_SAMPLING_RATE, &rate)
 
 	p.denoise_on = true
+	p.aec_on = true
+	p.gate_on = true
 	return true
 }
 
@@ -82,14 +96,19 @@ processor_destroy :: proc(p: ^Processor) {
 	p^ = {}
 }
 
-// Referenz fürs AEC: jeder Frame, der an den Lautsprecher geht (10 ms, ±1).
+// Referenz fürs AEC: jeder Frame, der an den Lautsprecher geht (10 ms, ±1)
+// landet im FIFO; processor_push_capture zieht ihn zeitversetzt heraus.
+// Voller Puffer verwirft die ältesten Frames — still, ohne Speex-Warnungen.
 processor_feed_playback :: proc(p: ^Processor, frame: []f32) {
 	assert(len(frame) == FRAME_10MS)
-	for s, i in frame {
-		p.scratch_ref[i] = i16(clamp(s, -1, 1) * 32767)
+	if p.ref_w - p.ref_r >= REF_FRAMES {
+		p.ref_r += 1
 	}
-	speex_echo_playback(p.aec, &p.scratch_ref[0])
-	p.ref_fresh = 4
+	dst := &p.ref_buf[p.ref_w % REF_FRAMES]
+	for s, i in frame {
+		dst[i] = i16(clamp(s, -1, 1) * 32767)
+	}
+	p.ref_w += 1
 }
 
 // Ein 10-ms-Mikrofon-Frame (±1). Rückgabe: fertiges Opus-Paket (in `out`),
@@ -98,14 +117,20 @@ processor_feed_playback :: proc(p: ^Processor, frame: []f32) {
 processor_push_capture :: proc(p: ^Processor, mic: []f32, out: []byte) -> (n: int) {
 	assert(len(mic) == FRAME_10MS && len(out) >= MAX_PAYLOAD)
 
-	// 1) AEC (arbeitet auf int16). Ohne frische Playback-Referenz gibt es
-	// kein Echo zu entfernen — Bypass statt Speex-Unterlauf.
+	// 1) AEC (arbeitet auf int16). Der älteste Referenz-Frame im FIFO ist
+	// das, was JETZT ungefähr aus dem Lautsprecher kommt (Playback-Vorlauf).
+	// Ohne Referenz (niemand spricht / Playback steht) gibt es kein Echo zu
+	// entfernen — Bypass.
 	for s, i in mic {
 		p.scratch_i16[i] = i16(clamp(s, -1, 1) * 32767)
 	}
-	if p.ref_fresh > 0 {
-		p.ref_fresh -= 1
-		speex_echo_capture(p.aec, &p.scratch_i16[0], &p.scratch_out[0])
+	if p.aec_on && p.ref_w > p.ref_r {
+		for p.ref_w - p.ref_r > REF_MAX_LEAD {
+			p.ref_r += 1 // zu weit vorausgelaufen → Ausrichtung zurückholen
+		}
+		ref := &p.ref_buf[p.ref_r % REF_FRAMES]
+		p.ref_r += 1
+		speex_echo_cancellation(p.aec, &p.scratch_i16[0], &ref[0], &p.scratch_out[0])
 	} else {
 		p.scratch_out = p.scratch_i16
 	}
@@ -120,8 +145,8 @@ processor_push_capture :: proc(p: ^Processor, mic: []f32, out: []byte) -> (n: in
 	}
 	p.vad = p.vad * 0.8 + prob * 0.2
 
-	// 3) Weiches Gate mit Hangover
-	if prob > GATE_OPEN_PROB {
+	// 3) Weiches Gate mit Hangover (abgeschaltet → dauerhaft offen)
+	if prob > GATE_OPEN_PROB || !p.gate_on {
 		p.hold = GATE_HOLD_FRAMES
 	} else if p.hold > 0 {
 		p.hold -= 1

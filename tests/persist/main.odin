@@ -90,11 +90,18 @@ main :: proc() {
 	if edch_id == 0 {
 		fail("edits-channel fehlt")
 	}
+	// edits enthält die Textnachricht + die Call-Karte aus dem Smoke-Test
 	he := request(&conn, &seq, {kind = shared.K_HISTORY, channel_id = edch_id})
-	if len(he.messages) != 1 || he.messages[0].text != "version vier" ||
+	if len(he.messages) != 2 || he.messages[0].text != "version vier" ||
 	   he.messages[0].edit_count != 3 || he.messages[0].edited_ms == 0 {
-		fail("edit nach neustart", "text =", he.messages[0].text, "count =", he.messages[0].edit_count)
+		fail("edit nach neustart", "anzahl =", len(he.messages), "count =", he.messages[0].edit_count)
 	}
+	// Die Call-Systemnachricht überlebt den Neustart inkl. Start/Ende
+	cm := he.messages[1]
+	if cm.call_start_ms == 0 || cm.call_end_ms < cm.call_start_ms || cm.edit_count != 0 {
+		fail("call-karte nach neustart", "start =", cm.call_start_ms, "end =", cm.call_end_ms)
+	}
+	fmt.println("ok: call-systemnachricht nach neustart korrekt")
 	mh := request(&conn, &seq, {kind = shared.K_MESSAGE_HISTORY, channel_id = edch_id, message_id = he.messages[0].id})
 	if len(mh.messages) != 4 || mh.messages[0].text != "version eins" || mh.messages[3].text != "version vier" {
 		fail("versionen nach neustart", "anzahl =", len(mh.messages))

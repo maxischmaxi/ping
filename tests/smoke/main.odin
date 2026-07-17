@@ -1,6 +1,6 @@
 package smoke
 
-// Headless-Protokoll-Smoke-Test gegen einen laufenden ping-Server.
+// Headless-Protokoll-Smoke-Test gegen einen laufenden flurfunk-Server.
 // Nutzung: smoke <host:port>   (Server muss mit frischem Datenverzeichnis laufen)
 // Bei Hängern von außen mit `timeout` begrenzen.
 
@@ -408,6 +408,7 @@ main :: proc() {
 	if lg.user.id != bob_id {
 		fail("login identität", "falscher user")
 	}
+	must(d, {kind = shared.K_PING}, "tcp-ping (latenz-echo)")
 
 	// 9) Voice-Call: Signalisierung, Presence und der UDP-SFU-Datenpfad
 	vj := must(a, {kind = shared.K_CALL_JOIN, channel_id = edch.id}, "alice startet call")
@@ -417,9 +418,22 @@ main :: proc() {
 	if len(vj.call.peers) != 1 || vj.call.peers[0].user_id != alice_id || vj.call.peers[0].ssrc != vj.ssrc {
 		fail("call_join peers", "anzahl =", len(vj.call.peers))
 	}
+	if vj.call.msg_id == 0 || vj.call.started_ms == 0 {
+		fail("call_join systemnachricht", "msg_id =", vj.call.msg_id, "started_ms =", vj.call.started_ms)
+	}
 	evc := expect_event(b, shared.EV_CALL_STATE, "bob bekommt ev_call_state (start)")
 	if evc.channel_id != edch.id || len(evc.call.peers) != 1 {
 		fail("ev_call_state start", "peers =", len(evc.call.peers))
+	}
+	if evc.call.msg_id != vj.call.msg_id {
+		fail("ev_call_state msg_id", "erwartet", vj.call.msg_id, "bekommen", evc.call.msg_id)
+	}
+	// Der Call-Start postet eine Systemnachricht in den Channel
+	evstart := expect_event(b, shared.EV_MESSAGE, "bob bekommt call-startnachricht")
+	if evstart.message.id != vj.call.msg_id || evstart.message.channel_id != edch.id ||
+	   evstart.message.author_id != alice_id || evstart.message.call_start_ms != vj.call.started_ms ||
+	   evstart.message.call_end_ms != 0 {
+		fail("call-startnachricht", "id =", evstart.message.id, "start =", evstart.message.call_start_ms)
 	}
 	lu2 := must(b, {kind = shared.K_LIST_USERS}, "list_users während call")
 	for u in lu2.users {
@@ -543,6 +557,23 @@ main :: proc() {
 	if len(evend.call.peers) != 0 {
 		fail("call-ende", "peers =", len(evend.call.peers))
 	}
+	// Die Systemnachricht trägt jetzt die Endzeit (kein Text-Edit!)
+	evfin := expect_event(b, shared.EV_MESSAGE_EDITED, "bob bekommt call-endnachricht")
+	if evfin.message.id != vj.call.msg_id || evfin.message.call_end_ms < evfin.message.call_start_ms ||
+	   evfin.message.call_start_ms != vj.call.started_ms || evfin.message.edit_count != 0 {
+		fail("call-endnachricht", "end =", evfin.message.call_end_ms, "count =", evfin.message.edit_count)
+	}
+	hcall := must(a, {kind = shared.K_HISTORY, channel_id = edch.id}, "history mit call-karte")
+	if len(hcall.messages) != 2 {
+		fail("call-karte in history", "anzahl =", len(hcall.messages))
+	}
+	hcm := hcall.messages[1]
+	if hcm.id != vj.call.msg_id || hcm.call_start_ms == 0 || hcm.call_end_ms < hcm.call_start_ms || hcm.edit_count != 0 {
+		fail("call-karte inhalt", "start =", hcm.call_start_ms, "end =", hcm.call_end_ms)
+	}
+	// Die Call-Nachricht ist nicht bearbeitbar (pflegt der Server)
+	must_err(a, {kind = shared.K_EDIT_START, channel_id = edch.id, message_id = vj.call.msg_id},
+		"not_allowed", "call-nachricht nicht bearbeitbar")
 	lu3 := must(b, {kind = shared.K_LIST_USERS}, "list_users nach call")
 	for u in lu3.users {
 		if u.in_call {

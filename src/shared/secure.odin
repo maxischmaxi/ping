@@ -11,7 +11,7 @@ import "core:sync"
 // beim ersten Verbinden (TOFU, wie SSH).
 
 NOISE_PROTOCOL :: "Noise_XX_25519_ChaChaPoly_BLAKE2s"
-NOISE_PROLOGUE :: "ping/1"
+NOISE_PROLOGUE :: "flurfunk/1"
 
 STATIC_KEY_SIZE :: 32
 

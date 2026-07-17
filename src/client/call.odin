@@ -31,6 +31,17 @@ Client_Call :: struct {
 	drag_off:    rl.Vector2,
 }
 
+// Engine-Optionen aus der Config (Geräte + DSP-Schalter).
+audio_opts :: proc(cfg: ^Config) -> audio.Engine_Options {
+	return {
+		mic_name   = cfg.audio_mic,
+		out_name   = cfg.audio_out,
+		no_denoise = cfg.denoise_off,
+		no_aec     = cfg.aec_off,
+		no_gate    = cfg.gate_off,
+	}
+}
+
 // Beitreten (oder Call starten — der Server startet implizit).
 call_join :: proc(app: ^App, c: ^Server_Conn, channel_id: u64) {
 	if app.call.joining {
@@ -42,6 +53,9 @@ call_join :: proc(app: ^App, c: ^Server_Conn, channel_id: u64) {
 	if app.call.active {
 		call_hangup(app) // Wechsel: alten Call sauber verlassen
 	}
+	// Laufende Audio-Tests geben die Geräte frei, bevor der Call sie öffnet.
+	settings_mic_test_stop(app)
+	audio.tone_stop(&app.spk_tone)
 	app.call.joining = true
 	conn_request(c, {kind = shared.K_CALL_JOIN, channel_id = channel_id}, {channel_id = channel_id})
 }
@@ -61,7 +75,7 @@ call_begin :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire) {
 	}
 	ep.port = w.udp_port
 
-	if !audio.engine_start(&app.call.engine, voice_on_packet, &app.call.link) {
+	if !audio.engine_start(&app.call.engine, voice_on_packet, &app.call.link, audio_opts(&app.cfg)) {
 		toast(app, .Error, "Kein Audiogerät verfügbar")
 		conn_request(c, {kind = shared.K_CALL_LEAVE})
 		return
@@ -79,7 +93,7 @@ call_begin :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire) {
 	app.call.muted = false
 	app.call.started_ms = mono_ms()
 	app.call.popout = false
-	conn_set_call_state(c, w.channel_id, w.call.peers)
+	conn_set_call_state(c, w.call)
 	audio.engine_blip(&app.call.engine, true)
 }
 
@@ -100,6 +114,7 @@ call_teardown :: proc(app: ^App) {
 	if !app.call.active {
 		return
 	}
+	settings_call_ended(app)            // laufende Audio-Tests hingen an dieser Engine
 	audio.engine_stop(&app.call.engine) // stoppt on_packet-Aufrufe …
 	voice_link_stop(&app.call.link)     // … dann darf der Socket zu
 	app.call.active = false
@@ -135,22 +150,30 @@ call_tick :: proc(app: ^App) {
 	voice_tick(&app.call.link)
 }
 
-// Peers-Stand eines Channels übernehmen (Event/Reply/list_channels).
-conn_set_call_state :: proc(c: ^Server_Conn, channel_id: u64, peers: []shared.Call_Peer) {
-	if len(peers) == 0 {
-		delete_key(&c.calls, channel_id)
+// Call-Stand eines Channels übernehmen (Event/Reply/list_channels).
+conn_set_call_state :: proc(c: ^Server_Conn, info: shared.Call_Info) {
+	if len(info.peers) == 0 {
+		delete_key(&c.calls, info.channel_id)
 		return
 	}
-	c.calls[channel_id] = peers
+	c.calls[info.channel_id] = {
+		peers      = info.peers,
+		msg_id     = info.msg_id,
+		started_ms = info.started_ms,
+	}
 }
 
 // EV_CALL_STATE anwenden: Banner-Daten, Blips, Stream-Sync, Rauswurf-Erkennung.
 app_apply_call_state :: proc(app: ^App, c: ^Server_Conn, channel_id: u64, info: shared.Call_Info) {
+	info := info
+	if info.channel_id == 0 {
+		info.channel_id = channel_id
+	}
 	mine := app.call.active && app.call.conn == c && app.call.channel_id == channel_id
 
 	if mine {
 		// Beitritts-/Abschieds-Blips (Vergleich alte ↔ neue ssrc-Menge)
-		old := c.calls[channel_id]
+		old := c.calls[channel_id].peers
 		for p in info.peers {
 			if p.ssrc == app.call.link.ssrc {
 				continue
@@ -181,7 +204,7 @@ app_apply_call_state :: proc(app: ^App, c: ^Server_Conn, channel_id: u64, info: 
 		}
 	}
 
-	conn_set_call_state(c, channel_id, info.peers)
+	conn_set_call_state(c, info)
 
 	if mine {
 		// Bin ich (mit genau meiner ssrc) noch drin? Sonst hat der Server
@@ -206,7 +229,7 @@ app_apply_call_state :: proc(app: ^App, c: ^Server_Conn, channel_id: u64, info: 
 
 // Läuft in diesem Channel gerade ein Call? (fürs Banner/Header-Icon)
 channel_call_peers :: proc(c: ^Server_Conn, channel_id: u64) -> []shared.Call_Peer {
-	return c.calls[channel_id]
+	return c.calls[channel_id].peers
 }
 
 // Ist der User gerade Teilnehmer im aktiven eigenen Call dieses Channels?
@@ -231,11 +254,16 @@ call_peer_level :: proc(app: ^App, p: shared.Call_Peer) -> f32 {
 	return clamp(lvl * 7, 0, 1)
 }
 
-// "MM:SS" bzw. "H:MM:SS" seit Beitritt.
-call_duration_label :: proc(app: ^App) -> string {
-	s := (mono_ms() - app.call.started_ms) / 1000
+// Sekunden → "MM:SS" bzw. "H:MM:SS".
+format_duration :: proc(s: i64) -> string {
+	s := max(s, 0)
 	if s >= 3600 {
 		return fmt.tprintf("%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
 	}
 	return fmt.tprintf("%02d:%02d", s / 60, s % 60)
+}
+
+// Dauer seit Beitritt (eigener Call).
+call_duration_label :: proc(app: ^App) -> string {
+	return format_duration((mono_ms() - app.call.started_ms) / 1000)
 }

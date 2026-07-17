@@ -25,7 +25,23 @@ import ma "vendor:miniaudio"
 PLAY_TARGET :: FRAME_20MS * 3 // 60 ms Vorlauf im Playback-Ring
 RING_CAP :: 8192
 
+// ssrc des Selbsttest-Loopbacks (Mikrofontest): kollidiert mit keiner
+// Server-ssrc (die zählen ab 1 aufwärts) und wird von engine_sync_streams
+// verschont, solange der Loopback läuft.
+LOOPBACK_SSRC :: u32(0xFFFF_FF10)
+
 Packet_Proc :: proc(user: rawptr, payload: []byte)
+
+// Start-Optionen: Geräte per Name ("" = Systemstandard) + DSP-Schalter.
+// Negativ benannt, damit der Nullwert die Production-Defaults trägt
+// (alles an, Standardgeräte).
+Engine_Options :: struct {
+	mic_name:   string,
+	out_name:   string,
+	no_denoise: bool,
+	no_aec:     bool,
+	no_gate:    bool,
+}
 
 // Ein Remote-Teilnehmer (ssrc): Jitter-Buffer + Decoder + UI-Pegel.
 Stream :: struct {
@@ -43,6 +59,10 @@ Engine :: struct {
 	worker:     ^thread.Thread,
 	running:    bool, // atomar
 	muted:      bool,
+	// Mikrofontest: fertige Opus-Pakete werden lokal wieder eingespeist
+	// statt gesendet — man hört sich selbst, ins Netz geht GAR NICHTS.
+	loopback:   bool,
+	loop_seq:   u64, // nur Worker
 	on_packet:  Packet_Proc, // läuft im Worker-Thread!
 	user:       rawptr,
 
@@ -79,17 +99,10 @@ engine_data_cb :: proc "c" (dev: ^ma.device, out_, in_: rawptr, frame_count: u32
 	}
 }
 
-engine_start :: proc(e: ^Engine, on_packet: Packet_Proc, user: rawptr) -> bool {
-	e^ = {}
-	if !processor_init(&e.tx) {
-		return false
-	}
-	ring_init(&e.cap_ring, RING_CAP)
-	ring_init(&e.play_ring, RING_CAP)
-	e.streams = make(map[u32]^Stream)
-	e.on_packet = on_packet
-	e.user = user
-
+// Duplex-Gerät nach Wunschnamen öffnen; unbekannte/verschwundene Geräte
+// fallen still auf den Systemstandard zurück.
+@(private = "file")
+engine_device_init :: proc(e: ^Engine, mic_name, out_name: string) -> bool {
 	cfg := ma.device_config_init(.duplex)
 	cfg.sampleRate = SAMPLE_RATE
 	cfg.periodSizeInFrames = FRAME_10MS
@@ -99,22 +112,75 @@ engine_start :: proc(e: ^Engine, on_packet: Packet_Proc, user: rawptr) -> bool {
 	cfg.playback.channels = 1
 	cfg.dataCallback = engine_data_cb
 	cfg.pUserData = e
+
+	mic_id, out_id: ma.device_id
+	have_mic, have_out := resolve_device_ids(mic_name, out_name, &mic_id, &out_id)
+	if have_mic {
+		cfg.capture.pDeviceID = &mic_id
+	}
+	if have_out {
+		cfg.playback.pDeviceID = &out_id
+	}
 	if ma.device_init(nil, &cfg, &e.dev) != .SUCCESS {
-		engine_cleanup(e)
-		return false
+		if !have_mic && !have_out {
+			return false
+		}
+		// Wunschgerät nicht mehr initialisierbar → Systemstandard
+		cfg.capture.pDeviceID = nil
+		cfg.playback.pDeviceID = nil
+		if ma.device_init(nil, &cfg, &e.dev) != .SUCCESS {
+			return false
+		}
 	}
 	if ma.device_start(&e.dev) != .SUCCESS {
 		ma.device_uninit(&e.dev)
-		engine_cleanup(e)
 		return false
 	}
 	e.dev_ok = true
+	return true
+}
+
+engine_start :: proc(e: ^Engine, on_packet: Packet_Proc, user: rawptr, opts: Engine_Options) -> bool {
+	e^ = {}
+	if !processor_init(&e.tx) {
+		return false
+	}
+	engine_set_dsp(e, !opts.no_denoise, !opts.no_aec, !opts.no_gate)
+	ring_init(&e.cap_ring, RING_CAP)
+	ring_init(&e.play_ring, RING_CAP)
+	e.streams = make(map[u32]^Stream)
+	e.on_packet = on_packet
+	e.user = user
+
+	if !engine_device_init(e, opts.mic_name, opts.out_name) {
+		engine_cleanup(e)
+		return false
+	}
 
 	sync.atomic_store(&e.running, true)
 	e.worker = thread.create(engine_worker)
 	e.worker.data = e
 	thread.start(e.worker)
 	return true
+}
+
+// DSP-Schalter zur Laufzeit (Settings-Toggles). Einfache bool-Schreiber —
+// der Worker liest sie pro Frame, ein Versatz von einem Frame ist egal.
+engine_set_dsp :: proc(e: ^Engine, denoise, aec, gate: bool) {
+	e.tx.denoise_on = denoise
+	e.tx.aec_on = aec
+	e.tx.gate_on = gate
+}
+
+// Geräte im laufenden Betrieb wechseln: nur das miniaudio-Device wird
+// getauscht, Worker/Streams/Jitter laufen weiter (kurze Stille beim Swap).
+engine_set_devices :: proc(e: ^Engine, mic_name, out_name: string) -> bool {
+	if !e.dev_ok {
+		return false
+	}
+	ma.device_uninit(&e.dev)
+	e.dev_ok = false
+	return engine_device_init(e, mic_name, out_name)
 }
 
 engine_stop :: proc(e: ^Engine) {
@@ -180,6 +246,9 @@ engine_sync_streams :: proc(e: ^Engine, keep: []u32) {
 	defer sync.unlock(&e.streams_mu)
 	drop := make([dynamic]u32, context.temp_allocator)
 	outer: for ssrc, s in e.streams {
+		if ssrc == LOOPBACK_SSRC && e.loopback {
+			continue // Selbsttest läuft — den eigenen Stream behalten
+		}
 		for k in keep {
 			if k == ssrc {
 				continue outer
@@ -194,6 +263,27 @@ engine_sync_streams :: proc(e: ^Engine, keep: []u32) {
 	}
 }
 
+// Mikrofontest an/aus. Beim Ausschalten wird der Loopback-Stream sofort
+// entsorgt (Decoder-Zustand, Pegel) — ein durch Race noch nachgeschobenes
+// Paket legt höchstens eine stumme Leiche an, die der nächste
+// engine_sync_streams wieder abräumt.
+engine_set_loopback :: proc(e: ^Engine, on: bool) {
+	e.loopback = on
+	if on {
+		return
+	}
+	sync.lock(&e.streams_mu)
+	defer sync.unlock(&e.streams_mu)
+	if e.streams == nil {
+		return
+	}
+	if s, ok := e.streams[LOOPBACK_SSRC]; ok {
+		decoder_destroy(&s.dec)
+		free(s)
+		delete_key(&e.streams, LOOPBACK_SSRC)
+	}
+}
+
 // Aktueller Ausgabe-Pegel eines Teilnehmers (Speaking-Glow).
 engine_stream_level :: proc(e: ^Engine, ssrc: u32) -> f32 {
 	sync.lock(&e.streams_mu)
@@ -202,6 +292,14 @@ engine_stream_level :: proc(e: ^Engine, ssrc: u32) -> f32 {
 		return s.level
 	}
 	return 0
+}
+
+// Beliebiges Mono-PCM (48 kHz, ±1) in den Ausgabe-Mix legen (Testton).
+// Übernimmt die Ownership — der Slice wird nach dem Abspielen freigegeben.
+engine_play_pcm :: proc(e: ^Engine, data: []f32) {
+	sync.lock(&e.blips_mu)
+	append(&e.blips, Blip{data, 0})
+	sync.unlock(&e.blips_mu)
 }
 
 // Kurzer Zweiklang: up = Beitritt (aufwärts), sonst Abschied (abwärts).
@@ -219,9 +317,7 @@ engine_blip :: proc(e: ^Engine, up: bool) {
 		phase += 2 * math.PI * f / SAMPLE_RATE
 		d[i] = math.sin(phase) * env * 0.16
 	}
-	sync.lock(&e.blips_mu)
-	append(&e.blips, Blip{d, 0})
-	sync.unlock(&e.blips_mu)
+	engine_play_pcm(e, d)
 }
 
 @(private = "file")
@@ -259,8 +355,14 @@ engine_worker :: proc(t: ^thread.Thread) {
 			n := processor_push_capture(&e.tx, cap_frame[:], pkt[:])
 			e.mic_level = e.tx.level
 			e.mic_vad = e.tx.vad
-			if n > 0 && !e.muted && e.on_packet != nil {
-				e.on_packet(e.user, pkt[:n])
+			if n > 0 {
+				if e.loopback {
+					// Selbsttest: Paket lokal wieder einspeisen, NICHTS senden
+					e.loop_seq += 1
+					engine_push_audio(e, LOOPBACK_SSRC, e.loop_seq, pkt[:n])
+				} else if !e.muted && e.on_packet != nil {
+					e.on_packet(e.user, pkt[:n])
+				}
 			}
 		}
 

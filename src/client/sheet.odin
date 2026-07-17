@@ -26,7 +26,7 @@ draw_history_sheet :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 	// open_modal hat die Öffnungs-Animation (Modal_Open, 1) zurückgesetzt —
 	// hier treibt sie das Hereinfahren von rechts an.
 	t := anim_to(app, anim_id(.Modal_Open, 1), 1, 14, initial = 0)
-	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_SCRIM, t*0.8))
+	rl.DrawRectangleRec({0, -app.bar_h, sw, sh + app.bar_h}, fade(COL_SCRIM, t*0.8))
 
 	w := min(SHEET_W, sw - 80)
 	p := rl.Rectangle{sw - w*ease_out_cubic(t), 0, w, sh}

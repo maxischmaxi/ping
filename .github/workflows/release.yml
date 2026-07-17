@@ -1,0 +1,274 @@
+# Release pipeline: runs when a v* tag is pushed onto main.
+# Builds Linux x86_64 + macOS arm64, creates the GitHub release,
+# then publishes to AUR and (optionally) the Homebrew tap.
+# Required secrets are documented in docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ODIN_RELEASE: dev-2026-07
+
+jobs:
+  check:
+    name: Tag prüfen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag muss auf main liegen
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::Tag $GITHUB_REF_NAME liegt nicht auf main"; exit 1; }
+      - name: Tag muss zur Quellcode-Version passen
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          src="$(grep -oP 'VERSION :: "\K[^"]+' src/shared/version.odin)"
+          [ "$tag" = "$src" ] \
+            || { echo "::error::Tag v$tag != VERSION $src (src/shared/version.odin)"; exit 1; }
+
+  create-release:
+    name: Release anlegen (Pre-Release)
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Idempotent: bei Re-Runs existiert das Release evtl. schon.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && exit 0
+          gh release create "$GITHUB_REF_NAME" --prerelease --verify-tag \
+            --title "Flurfunk ${GITHUB_REF_NAME#v}" --generate-notes
+
+  linux:
+    name: Linux x86_64 (Build, Tests, Upload)
+    needs: create-release
+    # 22.04 = ältere glibc, damit das Binary auch auf älteren Distros läuft.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: ${{ env.ODIN_RELEASE }}
+      - name: System-Abhängigkeiten
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev autoconf automake libtool
+      - name: Statische Audio-Libs bauen (opus, rnnoise, speexdsp)
+        run: packaging/ci/build-audio-deps.sh "$HOME/audio-prefix" rnnoise opus speexdsp
+      - name: miniaudio (Odin-Vendor) bauen
+        run: make -C "$(odin root)/vendor/miniaudio/src"
+      - name: Bauen
+        run: |
+          mkdir -p bin
+          odin build src/server -out:bin/flurfunk-server -o:speed
+          odin build src/client -out:bin/flurfunk -o:speed \
+            -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          bin/flurfunk-server -version
+          bin/flurfunk -version
+      - name: Tests (Audio-DSP, Protokoll-Smoke, Persistenz)
+        run: |
+          odin build tests/audio -out:bin/audiotest \
+            -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          odin build tests/smoke -out:bin/smoke
+          odin build tests/persist -out:bin/persist
+          bin/audiotest
+
+          bin/flurfunk-server -port 7999 -data "$RUNNER_TEMP/data" & srv=$!
+          for _ in $(seq 50); do (echo >/dev/tcp/127.0.0.1/7999) 2>/dev/null && break; sleep 0.2; done
+          timeout 120 bin/smoke 127.0.0.1:7999
+          kill $srv; wait $srv || true
+
+          # Persistenz: Neustart gegen denselben Datenbestand.
+          bin/flurfunk-server -port 7999 -data "$RUNNER_TEMP/data" & srv=$!
+          for _ in $(seq 50); do (echo >/dev/tcp/127.0.0.1/7999) 2>/dev/null && break; sleep 0.2; done
+          timeout 60 bin/persist 127.0.0.1:7999
+          kill $srv; wait $srv || true
+      - name: Paketieren und ans Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dist="flurfunk-$version-linux-x86_64"
+          mkdir -p "dist/$dist"
+          cp bin/flurfunk bin/flurfunk-server LICENSE README.md "dist/$dist/"
+          cp packaging/linux/flurfunk.desktop "dist/$dist/"
+          mkdir -p "dist/$dist/icons"
+          cp assets/icon/png/*.png assets/icon/flurfunk.svg "dist/$dist/icons/"
+          tar -C dist -czf "$dist.tar.gz" "$dist"
+          gh release upload "$GITHUB_REF_NAME" "$dist.tar.gz" --clobber
+
+  macos:
+    name: macOS arm64 (Build, Signierung, Upload)
+    needs: create-release
+    runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: ${{ env.ODIN_RELEASE }}
+      - name: Build-Werkzeuge
+        run: brew install autoconf automake libtool
+      - name: Statische Audio-Libs bauen (opus, rnnoise, speexdsp)
+        run: packaging/ci/build-audio-deps.sh "$HOME/audio-prefix" rnnoise opus speexdsp
+      - name: miniaudio (Odin-Vendor) bauen
+        run: make -C "$(odin root)/vendor/miniaudio/src"
+      - name: Bauen
+        run: |
+          mkdir -p bin
+          odin build src/server -out:bin/flurfunk-server -o:speed \
+            -minimum-os-version:12.0
+          odin build src/client -out:bin/flurfunk -o:speed \
+            -minimum-os-version:12.0 \
+            -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          bin/flurfunk-server -version
+          bin/flurfunk -version
+      - name: Audio-DSP-Test
+        run: |
+          odin build tests/audio -out:bin/audiotest \
+            -minimum-os-version:12.0 \
+            -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          bin/audiotest
+      - name: App-Bundle bauen
+        run: packaging/macos/make_app.sh bin/flurfunk "${GITHUB_REF_NAME#v}" out
+      - name: Signieren (Developer ID, sonst ad-hoc)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -n "$MACOS_CERT_P12" ]; then
+            echo "$MACOS_CERT_P12" | base64 -d > /tmp/cert.p12
+            security create-keychain -p ci build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p ci build.keychain
+            security set-keychain-settings -lut 21600 build.keychain
+            security import /tmp/cert.p12 -k build.keychain \
+              -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain >/dev/null
+            identity="$(security find-identity -v -p codesigning build.keychain | awk -F'"' 'NR==1{print $2}')"
+            echo "Signiere mit: $identity"
+            codesign --force --options runtime --timestamp --sign "$identity" bin/flurfunk-server
+            codesign --force --options runtime --timestamp --sign "$identity" bin/flurfunk
+            codesign --force --options runtime --timestamp --sign "$identity" out/Flurfunk.app
+          else
+            echo "::notice::Keine Signatur-Secrets gesetzt — ad-hoc-Signatur (siehe docs/RELEASING.md)"
+            codesign --force -s - bin/flurfunk-server
+            codesign --force -s - bin/flurfunk
+            codesign --force -s - out/Flurfunk.app
+          fi
+      - name: Notarisieren (optional, braucht Apple-Secrets)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ] || [ -z "$APPLE_ID" ]; then
+            echo "::notice::Notarisierung übersprungen (APPLE_*-Secrets fehlen)"
+            exit 0
+          fi
+          ditto -c -k --keepParent out/Flurfunk.app /tmp/notarize.zip
+          xcrun notarytool submit /tmp/notarize.zip --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple out/Flurfunk.app
+      - name: Paketieren und ans Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dist="flurfunk-$version-macos-arm64"
+          mkdir -p "dist/$dist"
+          cp bin/flurfunk bin/flurfunk-server LICENSE README.md "dist/$dist/"
+          tar -C dist -czf "$dist.tar.gz" "$dist"
+          ditto -c -k --keepParent out/Flurfunk.app "Flurfunk-$version-macos-arm64.app.zip"
+          gh release upload "$GITHUB_REF_NAME" \
+            "$dist.tar.gz" "Flurfunk-$version-macos-arm64.app.zip" --clobber
+
+  publish:
+    name: Release veröffentlichen
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --prerelease=false --latest
+          mkdir -p /tmp/assets && cd /tmp/assets
+          gh release download "$GITHUB_REF_NAME" --dir .
+          sha256sum * > SHA256SUMS.txt
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
+
+  aur:
+    name: AUR-Paket aktualisieren (flurfunk-bin)
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: PKGBUILD generieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "flurfunk-$version-linux-x86_64.tar.gz" --dir /tmp/rel
+          sha="$(sha256sum /tmp/rel/*.tar.gz | cut -d' ' -f1)"
+          sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$sha/g" \
+            packaging/aur/PKGBUILD.in > /tmp/PKGBUILD
+          cat /tmp/PKGBUILD
+      - uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: flurfunk-bin
+          pkgbuild: /tmp/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"
+          test: true
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+
+  homebrew:
+    name: Homebrew-Tap aktualisieren
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN nicht gesetzt — Tap-Update übersprungen (siehe docs/HOMEBREW.md)"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "flurfunk-$version-macos-arm64.tar.gz" --dir /tmp/rel
+          sha="$(sha256sum /tmp/rel/*.tar.gz | cut -d' ' -f1)"
+          sed -e "s/@VERSION@/$version/g" -e "s/@SHA256_MACOS@/$sha/g" \
+            packaging/homebrew/flurfunk.rb.in > /tmp/flurfunk.rb
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/maxischmaxi/homebrew-tap.git" /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp /tmp/flurfunk.rb /tmp/tap/Formula/flurfunk.rb
+          cd /tmp/tap
+          git config user.name "maxischmaxi"
+          git config user.email "max@jeschek.dev"
+          git add Formula/flurfunk.rb
+          git commit -m "flurfunk ${GITHUB_REF_NAME}" || { echo "keine Änderung"; exit 0; }
+          git push

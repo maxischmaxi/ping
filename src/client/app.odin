@@ -11,6 +11,7 @@ import "core:time/datetime"
 import "core:time/timezone"
 
 import rl "vendor:raylib"
+import audio "../audio"
 import shared "../shared"
 
 HISTORY_PAGE :: 50
@@ -23,6 +24,7 @@ Modal_Kind :: enum {
 	Quick_Switch,
 	Confirm_Delete, // Kanal löschen bestätigen (app.confirm_channel)
 	Msg_History,    // Bearbeitungsverlauf einer Nachricht (Sheet von rechts)
+	Settings,       // App-Einstellungen (Audio-Geräte + Selbsttest)
 }
 
 // Kontextmenü (Rechtsklick auf einen Kanal in der Sidebar).
@@ -80,6 +82,25 @@ App :: struct {
 
 	// Aktiver Voice-Call (app-weit höchstens einer, call.odin)
 	call: Client_Call,
+
+	// Höhe der Call-Leiste (Top-Bar) in diesem Frame — die gesamte UI
+	// rutscht per Camera-Offset um diese Höhe nach unten (main.odin).
+	bar_h: f32,
+
+	// Settings-Dialog (settingsui.odin): Gerätelisten + Audio-Selbsttest
+	set_devices_out: []audio.Device,
+	set_devices_mic: []audio.Device,
+	set_dd:          int, // offenes Dropdown: 0 = keins, 1 = Mikro, 2 = Lautsprecher
+	mic_test:        bool,
+	mic_test_call:   bool, // Test läuft als Loopback in der CALL-Engine
+	test_engine:     audio.Engine,
+	spk_tone:        audio.Tone,
+
+	// Während eines Tests im Call sind wir automatisch stummgeschaltet —
+	// der vorherige Zustand kommt nach dem Test zurück.
+	test_muting:       bool,
+	test_restore_mute: bool,
+	spk_test_until:    i64, // mono_ms-Ende des Ausgabetests im Call (0 = keiner)
 
 	welcome_input: Text_Input,
 	welcome_error: string,
@@ -233,7 +254,8 @@ app_poll :: proc(app: ^App) {
 	for c, i in app.conns {
 		app_poll_conn(app, c, i == app.active)
 	}
-	call_tick(app) // Voice: Keepalive/HELLO-Retries, Trennung erkennen
+	call_tick(app)          // Voice: Keepalive/HELLO-Retries, Trennung erkennen
+	settings_test_tick(app) // Audio-Tests: Ton-Ende, Test-Mute zurücknehmen
 }
 
 conn_label :: proc(c: ^Server_Conn) -> string {
@@ -308,6 +330,14 @@ app_poll_conn :: proc(app: ^App, c: ^Server_Conn, is_active_server: bool) {
 		c.synced = true
 		conn_request(c, {kind = shared.K_LIST_USERS})
 		conn_request(c, {kind = shared.K_LIST_CHANNELS})
+	}
+
+	// TCP-Latenz: alle 5 s ein leichtgewichtiger Ping (Kopfzeilen-Indikator)
+	if phase == .Ready && !c.rtt_pending && mono_ms() - c.rtt_last >= 5000 {
+		c.rtt_pending = true
+		c.rtt_sent = mono_ms()
+		c.rtt_last = c.rtt_sent
+		conn_request(c, {kind = shared.K_PING})
 	}
 
 	for w in msgs {
@@ -407,7 +437,7 @@ app_apply_reply :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire, p: Pending) 
 		}
 		clear(&c.calls)
 		for info in w.calls {
-			conn_set_call_state(c, info.channel_id, info.peers)
+			conn_set_call_state(c, info)
 		}
 		// ersten Channel aktivieren
 		if c.active_channel == 0 {
@@ -512,6 +542,12 @@ app_apply_reply :: proc(app: ^App, c: ^Server_Conn, w: shared.Wire, p: Pending) 
 			toast(app, .Error, translate_err(w.err))
 		}
 
+	case shared.K_PING:
+		c.rtt_pending = false
+		rtt := f32(mono_ms() - c.rtt_sent)
+		// Geglättet, damit die Anzeige nicht zappelt (erster Wert direkt)
+		c.rtt_ms = c.rtt_ms <= 0 ? rtt : c.rtt_ms*0.6 + rtt*0.4
+
 	case shared.K_MESSAGE_HISTORY:
 		if app.modal != .Msg_History || app.history_msg_id != p.message_id {
 			return
@@ -579,6 +615,7 @@ app_apply_edit :: proc(c: ^Server_Conn, m: shared.Chat_Message) {
 			ex.text = m.text
 			ex.edited_ms = m.edited_ms
 			ex.edit_count = m.edit_count
+			ex.call_end_ms = m.call_end_ms // Call-Karte: „läuft“ → „beendet“
 			cs.rows_w = -1
 			// Selektions-Indizes dieser Nachricht sind hinfällig
 			if g_sel.active && g_sel.conn == c && g_sel.channel == m.channel_id {

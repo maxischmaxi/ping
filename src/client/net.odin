@@ -53,6 +53,13 @@ Channel_State :: struct {
 	adjust_scroll: bool, // nach History-Prepend Scroll-Position erhalten
 }
 
+// Laufender Call eines Channels (aus EV_CALL_STATE bzw. list_channels).
+Channel_Call :: struct {
+	peers:      []shared.Call_Peer,
+	msg_id:     u64, // Systemnachricht des Calls (Chat-Karte)
+	started_ms: i64, // Unix-ms des Call-Starts (Server-Zeit)
+}
+
 // Kontext für ausstehende Requests (seq → was war das?).
 Pending :: struct {
 	kind:       string,
@@ -95,12 +102,19 @@ Server_Conn :: struct {
 	active_channel: u64, // Channel-ID, 0 = keiner
 	synced:         bool, // list_users/list_channels nach Ready gesendet?
 	sidebar_scroll: Scroll,
-	calls:          map[u64][]shared.Call_Peer, // laufende Calls (channel_id → Teilnehmer)
+	calls:          map[u64]Channel_Call, // laufende Calls (channel_id → Stand)
 
 	// Reconnect-Verwaltung (Main-Thread)
 	prev_phase:  Conn_Phase,
 	retry_count: int,
 	retry_at:    f64, // rl.GetTime()-Zeitpunkt des nächsten Auto-Versuchs (0 = keiner)
+
+	// TCP-Latenz (Main-Thread): alle 5 s ein K_PING, geglätteter RTT für
+	// den Indikator in der Kopfzeile. Höchstens ein Ping unterwegs.
+	rtt_ms:      f32, // 0 = noch kein Messwert
+	rtt_pending: bool,
+	rtt_sent:    i64, // mono_ms beim Senden
+	rtt_last:    i64, // mono_ms des letzten Ping-Versands
 
 	// --- UI-Zustand (nur Main-Thread) ---
 	auth_tab:      int, // 0 = Anmelden, 1 = Registrieren
@@ -158,6 +172,9 @@ conn_start :: proc(c: ^Server_Conn) {
 	clear(&c.calls)
 	c.active_channel = 0
 	c.synced = false
+	c.rtt_ms = 0
+	c.rtt_pending = false
+	c.rtt_last = 0
 	c.auth_error = ""
 	c.auth_busy = false
 	c.setup_error = ""

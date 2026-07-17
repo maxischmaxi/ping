@@ -281,6 +281,11 @@ Log_Entry :: struct {
 	ts_ms:      i64    `json:"ts_ms"`,
 	text:       string `json:"text"`,
 	edit_of:    u64    `json:"edit_of"`,
+
+	// Voice-Call-Systemnachricht bzw. ihr Ende-Record (edit_of gesetzt,
+	// call_end_ms > 0 → überschreibt nur call_end_ms, zählt nicht als Edit).
+	call_start_ms: i64 `json:"call_start_ms,omitempty"`,
+	call_end_ms:   i64 `json:"call_end_ms,omitempty"`,
 }
 
 // Edit-Record auf der Platte (append-only, wie Nachrichten verschlüsselt).
@@ -332,6 +337,23 @@ store_edit :: proc(ch: ^Channel, msg_id: u64, text: string, ts_ms: i64) -> bool 
 	return append_log(ch, pt)
 }
 
+// Ende-Record einer Call-Systemnachricht (append-only wie ein Edit,
+// setzt beim Replay aber nur call_end_ms).
+@(private = "file")
+Call_End_Rec :: struct {
+	edit_of:     u64 `json:"edit_of"`,
+	ts_ms:       i64 `json:"ts_ms"`,
+	call_end_ms: i64 `json:"call_end_ms"`,
+}
+
+store_call_end :: proc(ch: ^Channel, msg_id: u64, end_ms: i64) -> bool {
+	pt, merr := json.marshal(Call_End_Rec{edit_of = msg_id, ts_ms = end_ms, call_end_ms = end_ms}, {}, context.temp_allocator)
+	if merr != nil {
+		return false
+	}
+	return append_log(ch, pt)
+}
+
 // Alle Records eines Channel-Logs entschlüsseln (temp-alloziert, in
 // Schreibreihenfolge — Edits stehen immer hinter ihrer Nachricht).
 @(private = "file")
@@ -372,7 +394,10 @@ load_log :: proc(ch: ^Channel) -> []Log_Entry {
 
 @(private = "file")
 entry_message :: proc(e: Log_Entry) -> shared.Chat_Message {
-	return {id = e.id, channel_id = e.channel_id, author_id = e.author_id, ts_ms = e.ts_ms, text = e.text}
+	return {
+		id = e.id, channel_id = e.channel_id, author_id = e.author_id,
+		ts_ms = e.ts_ms, text = e.text, call_start_ms = e.call_start_ms,
+	}
 }
 
 // Historie lesen: Log abspielen (Edits überschreiben ihre Nachricht), nach
@@ -385,9 +410,13 @@ load_history :: proc(ch: ^Channel, before_id: u64, limit: int) -> []shared.Chat_
 		if e.edit_of != 0 {
 			if idx, ok := index[e.edit_of]; ok {
 				m := &msgs[idx]
-				m.text = e.text
-				m.edited_ms = e.ts_ms
-				m.edit_count += 1
+				if e.call_end_ms > 0 {
+					m.call_end_ms = e.call_end_ms
+				} else {
+					m.text = e.text
+					m.edited_ms = e.ts_ms
+					m.edit_count += 1
+				}
 			}
 			continue
 		}
@@ -420,9 +449,13 @@ load_message :: proc(ch: ^Channel, msg_id: u64) -> (msg: shared.Chat_Message, ok
 			msg = entry_message(e)
 			ok = true
 		} else if e.edit_of == msg_id && ok {
-			msg.text = e.text
-			msg.edited_ms = e.ts_ms
-			msg.edit_count += 1
+			if e.call_end_ms > 0 {
+				msg.call_end_ms = e.call_end_ms
+			} else {
+				msg.text = e.text
+				msg.edited_ms = e.ts_ms
+				msg.edit_count += 1
+			}
 		}
 	}
 	return
@@ -436,6 +469,9 @@ load_message_versions :: proc(ch: ^Channel, msg_id: u64) -> []shared.Chat_Messag
 		if e.edit_of == 0 && e.id == msg_id {
 			append(&vers, entry_message(e))
 		} else if e.edit_of == msg_id && len(vers) > 0 {
+			if e.call_end_ms > 0 {
+				continue // Call-Ende ist keine Textversion
+			}
 			v := vers[0]
 			v.text = e.text
 			v.ts_ms = e.ts_ms

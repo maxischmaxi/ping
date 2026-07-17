@@ -1,6 +1,6 @@
 package main
 
-// ping-server: Slack-artiger Chat-Server.
+// flurfunk-server: Slack-artiger Chat-Server.
 // Transport: Noise XX über TCP (Shared-Package), Nachrichten at rest
 // XChaCha20-Poly1305-verschlüsselt pro Channel-Key.
 
@@ -22,7 +22,7 @@ DEFAULT_PORT :: 7788
 g_noise_priv: ecdh.Private_Key
 
 usage_exit :: proc() -> ! {
-	fmt.printfln("Benutzung: ping-server [-port <n>] [-data <dir>] [-key <pfad>]")
+	fmt.printfln("Benutzung: flurfunk-server [-port <n>] [-data <dir>] [-key <pfad>] [-version]")
 	os.exit(2)
 }
 
@@ -124,12 +124,16 @@ disconnect :: proc(c: ^Client_Conn) {
 
 main :: proc() {
 	port := DEFAULT_PORT
-	data_dir := "./ping-data"
+	data_dir := "./flurfunk-data"
 	key_path := ""
 
 	// Einfaches manuelles Parsen von os.args.
 	args := os.args
 	for i := 1; i < len(args); i += 1 {
+		if args[i] == "-version" || args[i] == "--version" {
+			fmt.printfln("flurfunk-server %s", shared.VERSION)
+			os.exit(0)
+		}
 		if i + 1 >= len(args) {
 			usage_exit() // alle Flags brauchen einen Wert
 		}
@@ -198,7 +202,7 @@ main :: proc() {
 		os.exit(1)
 	}
 
-	fmt.printfln("[start] ping-server lauscht auf Port %d", port)
+	fmt.printfln("[start] flurfunk-server %s lauscht auf Port %d", shared.VERSION, port)
 	fmt.printfln("[start] Datenverzeichnis: %s", data_dir)
 	fmt.printfln("[start] Noise-Fingerprint: %s", fingerprint)
 	free_all(context.temp_allocator)

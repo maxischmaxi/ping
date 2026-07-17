@@ -57,6 +57,8 @@ handle_wire :: proc(c: ^Client_Conn, w: shared.Wire) {
 			return
 		}
 		switch w.kind {
+		case shared.K_PING:
+			send_to(c, shared.wire_ok(w.kind, w.seq)) // Latenz-Echo
 		case shared.K_SETUP:
 			handle_setup(c, w)
 		case shared.K_LIST_USERS:
@@ -563,7 +565,8 @@ handle_edit_start :: proc(c: ^Client_Conn, w: shared.Wire) {
 		send_err(c, w.kind, w.seq, "not_found")
 		return
 	}
-	if msg.author_id != c.user_id {
+	if msg.author_id != c.user_id || msg.call_start_ms > 0 {
+		// Call-Systemnachrichten pflegt ausschließlich der Server.
 		send_err(c, w.kind, w.seq, "not_allowed")
 		return
 	}
@@ -610,7 +613,7 @@ handle_edit_message :: proc(c: ^Client_Conn, w: shared.Wire) {
 		send_err(c, w.kind, w.seq, "not_found")
 		return
 	}
-	if msg.author_id != c.user_id {
+	if msg.author_id != c.user_id || msg.call_start_ms > 0 {
 		send_err(c, w.kind, w.seq, "not_allowed")
 		return
 	}

@@ -1,0 +1,30 @@
+# Tap formula template: CI (or docs/HOMEBREW.md steps) substitutes
+# @VERSION@ / @SHA256_MACOS@. Lives at Formula/flurfunk.rb in the tap repo.
+class Flurfunk < Formula
+  desc "Self-hosted team chat with encrypted voice calls"
+  homepage "https://github.com/maxischmaxi/flurfunk"
+  url "https://github.com/maxischmaxi/flurfunk/releases/download/v@VERSION@/flurfunk-@VERSION@-macos-arm64.tar.gz"
+  sha256 "@SHA256_MACOS@"
+  version "@VERSION@"
+  license "MIT"
+
+  # Audio libs are statically linked; no runtime dependencies.
+  depends_on :macos
+  depends_on arch: :arm64
+
+  def install
+    bin.install "flurfunk"
+    bin.install "flurfunk-server"
+  end
+
+  def caveats
+    <<~EOS
+      Client starten:  flurfunk
+      Server starten:  flurfunk-server -port 7788 -data ~/flurfunk-data
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/flurfunk --version")
+  end
+end

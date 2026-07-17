@@ -520,6 +520,12 @@ draw_text :: proc(font: rl.Font, text: cstring, pos: rl.Vector2, size, spacing: 
 g_clip: rl.Rectangle
 g_clip_on: bool
 
+// Vertikaler Versatz der gesamten UI in logischen Pixeln (Call-Leiste am
+// oberen Rand, main.odin setzt ihn pro Frame). raylib-Scissor arbeitet in
+// physischen Fenster-Koordinaten und muss ihn mitrechnen — die Camera2D
+// verschiebt nur das Zeichnen, nicht den Scissor.
+g_off_y := f32(0)
+
 @(private = "file")
 Clip_Frame :: struct {
 	rect: rl.Rectangle,
@@ -548,7 +554,7 @@ apply_scissor :: proc(r: rl.Rectangle) {
 		return
 	}
 	rl.BeginScissorMode(
-		i32(r.x * g_scale), i32(r.y * g_scale),
+		i32(r.x * g_scale), i32((r.y + g_off_y) * g_scale),
 		i32(r.width * g_scale) + 1, i32(r.height * g_scale) + 1,
 	)
 }

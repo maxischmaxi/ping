@@ -44,6 +44,10 @@ K_CALL_JOIN  :: "call_join"
 K_CALL_LEAVE :: "call_leave"
 K_CALL_MUTE  :: "call_mute" // muted-Flag setzen (nur Anzeige für andere)
 
+// Leichtgewichtiger Echo-Request: der Server antwortet sofort mit ok —
+// der Client misst daraus die TCP-Latenz (Indikator in der Kopfzeile).
+K_PING :: "ping"
+
 // Server -> Client Events (seq == 0)
 EV_MESSAGE         :: "ev_message"         // neue Chat-Nachricht
 EV_MESSAGE_EDITED  :: "ev_message_edited"  // Nachricht wurde bearbeitet (message = neuer Stand)
@@ -80,6 +84,8 @@ Call_Peer :: struct {
 Call_Info :: struct {
 	channel_id: u64         `json:"channel_id"`,
 	peers:      []Call_Peer `json:"peers,omitempty"`,
+	msg_id:     u64         `json:"msg_id,omitempty"`,     // Systemnachricht des Calls (Chat-Karte)
+	started_ms: i64         `json:"started_ms,omitempty"`, // Unix-ms des Call-Starts (Server-Zeit)
 }
 
 Channel :: struct {
@@ -98,6 +104,12 @@ Chat_Message :: struct {
 	text:       string `json:"text"`,
 	edited_ms:  i64    `json:"edited_ms,omitempty"`,  // letzter Edit (0 = nie bearbeitet)
 	edit_count: int    `json:"edit_count,omitempty"`, // wie oft bearbeitet (max. MAX_MESSAGE_EDITS)
+
+	// Voice-Call-Systemnachricht (author = Starter, text bleibt leer).
+	// Der Server postet sie beim Call-Start und trägt beim Ende call_end_ms
+	// nach — der Client rendert daraus die Call-Karte (live/beendet).
+	call_start_ms: i64 `json:"call_start_ms,omitempty"`, // > 0 = Call-Systemnachricht
+	call_end_ms:   i64 `json:"call_end_ms,omitempty"`,   // > 0 = Call beendet
 }
 
 // Ein flacher Envelope für alle Nachrichten-Kinds. Nicht gesetzte Felder

@@ -67,10 +67,11 @@ SPEEX_ECHO_SET_SAMPLING_RATE :: 24
 @(default_calling_convention = "c")
 foreign speexdsp_lib {
 	speex_echo_state_init :: proc(frame_size: c.int, filter_length: c.int) -> ^Speex_Echo_State ---
-	// Getrennte Fütterung: playback() mit jedem abgespielten Frame,
-	// capture() richtet die Referenz intern zeitlich aus.
-	speex_echo_playback :: proc(st: ^Speex_Echo_State, play: [^]i16) ---
-	speex_echo_capture :: proc(st: ^Speex_Echo_State, rec: [^]i16, out: [^]i16) ---
+	// Direkte API: Mikrofon-Frame + zeitlich passender Playback-Frame rein,
+	// echofreier Frame raus. Die Ausrichtung der Referenz machen wir selbst
+	// (dsp.odin) — die gepufferte API (speex_echo_playback/capture) verträgt
+	// keine burstweise Fütterung und spammt sonst xrun-Warnungen.
+	speex_echo_cancellation :: proc(st: ^Speex_Echo_State, rec: [^]i16, play: [^]i16, out: [^]i16) ---
 	speex_echo_state_reset :: proc(st: ^Speex_Echo_State) ---
 	speex_echo_state_destroy :: proc(st: ^Speex_Echo_State) ---
 	speex_echo_ctl :: proc(st: ^Speex_Echo_State, request: c.int, ptr: rawptr) -> c.int ---

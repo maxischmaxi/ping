@@ -9,6 +9,9 @@ import rl "vendor:raylib"
 import shared "../shared"
 
 open_modal :: proc(app: ^App, kind: Modal_Kind) {
+	if app.modal == .Settings && kind != .Settings {
+		settings_on_close(app) // Wechsel (z. B. Strg+K): Audio-Tests stoppen
+	}
 	app.modal = kind
 	app.modal_error = ""
 	ti_clear(&app.modal_input)
@@ -16,7 +19,7 @@ open_modal :: proc(app: ^App, kind: Modal_Kind) {
 	app.switcher_sel = 0
 	app.anim.vals[anim_id(.Modal_Open, 1)] = 0 // Öffnungs-Animation neu starten
 	#partial switch kind {
-	case .Members, .Msg_History:
+	case .Members, .Msg_History, .Settings:
 		app.ui.focus = .None
 	case .Quick_Switch:
 		app.ui.focus = .Switcher
@@ -31,6 +34,9 @@ open_modal :: proc(app: ^App, kind: Modal_Kind) {
 }
 
 close_modal :: proc(app: ^App) {
+	if app.modal == .Settings {
+		settings_on_close(app) // Audio-Tests stoppen, Gerätelisten freigeben
+	}
 	app.modal = .None
 	app.ui.focus = .Message
 	app.ui.tab_focus = 0
@@ -38,10 +44,11 @@ close_modal :: proc(app: ^App) {
 }
 
 // Overlay + zentriertes Panel mit Öffnungs-Animation. Gibt Panel-Rect zurück.
-@(private = "file")
+// (paketweit: auch settingsui.odin baut darauf auf)
 modal_frame :: proc(app: ^App, sw, sh, w, h: f32, title: string, top: f32 = -1) -> rl.Rectangle {
 	t := anim_to(app, anim_id(.Modal_Open, 1), 1, 16, initial = 0)
-	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_SCRIM, t))
+	// Scrim deckt auch die Call-Leiste ab (liegt bei negativem y)
+	rl.DrawRectangleRec({0, -app.bar_h, sw, sh + app.bar_h}, fade(COL_SCRIM, t))
 
 	scale := 0.96 + 0.04*t
 	pw := w * scale
@@ -114,6 +121,9 @@ draw_modals :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 
 	case .Members:
 		draw_members_modal(app, c, sw, sh)
+
+	case .Settings:
+		draw_settings_modal(app, sw, sh)
 
 	case .Quick_Switch:
 		draw_quick_switcher(app, c, sw, sh)

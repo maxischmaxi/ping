@@ -20,7 +20,7 @@ fi
 
 mkdir -p bin
 echo "== Server =="
-odin build src/server -out:bin/ping-server $FLAGS
+odin build src/server -out:bin/flurfunk-server $FLAGS
 echo "== Client =="
-odin build src/client -out:bin/ping $FLAGS
-echo "Fertig: bin/ping-server, bin/ping"
+odin build src/client -out:bin/flurfunk $FLAGS
+echo "Fertig: bin/flurfunk-server, bin/flurfunk"

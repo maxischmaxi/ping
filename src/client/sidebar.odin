@@ -121,8 +121,10 @@ sidebar_row :: proc(app: ^App, view: rl.Rectangle, s: ^Scroll, r: rl.Rectangle, 
 	return
 }
 
+// Zeichnet den Unread-Badge (rechte Kante bei right_x) und gibt seine
+// Breite zurück — daneben platzierte Icons rücken entsprechend nach links.
 @(private = "file")
-draw_badge :: proc(app: ^App, right_x, cy: f32, count: int, pop_id: u64) {
+draw_badge :: proc(app: ^App, right_x, cy: f32, count: int, pop_id: u64) -> f32 {
 	label := fmt.tprintf("%d", count)
 	tw := rl.MeasureTextEx(app.fonts.bold13, tcstr(label), 13, 0)
 	w := max(tw.x + 12, 20)
@@ -132,6 +134,7 @@ draw_badge :: proc(app: ^App, right_x, cy: f32, count: int, pop_id: u64) {
 	r := rl.Rectangle{right_x - w + (w - sw)/2, cy - sH/2, sw, sH}
 	rrect(r, sH/2, COL_BADGE)
 	draw_text(app.fonts.bold13, tcstr(label), {right_x - w + (w - tw.x)/2, cy - 6}, 13, 0, COL_WHITE)
+	return w
 }
 
 draw_sidebar :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase, sh: f32) {
@@ -199,8 +202,17 @@ draw_sidebar :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase, sh: f32) {
 		}
 		draw_text(app.fonts.regular15, "#", {x + 20, y + 7}, 15, 0, is_active ? fade(COL_PRIMARY_FG, 0.8) : COL_SIDEBAR_DIM)
 		draw_text(font, tcstr(cs.ch.name), {x + 36, y + 7}, 15, 0, col)
+		right := x + SIDEBAR_W - 16
 		if cs.unread > 0 && !is_active {
-			draw_badge(app, x + SIDEBAR_W - 16, y + 15, cs.unread, anim_id(.Badge_Pop, cs.ch.id))
+			right -= draw_badge(app, right, y + 15, cs.unread, anim_id(.Badge_Pop, cs.ch.id)) + 10
+		}
+		if cc := c.calls[cs.ch.id]; len(cc.peers) > 0 {
+			// Hier läuft gerade ein Voice-Call: Kopfhörer + Teilnehmerzahl
+			icol := is_active ? COL_PRIMARY_FG : COL_ONLINE
+			cnt := fmt.tprintf("%d", len(cc.peers))
+			cw := rl.MeasureTextEx(app.fonts.bold11, tcstr(cnt), 11, 0).x
+			draw_text(app.fonts.bold11, tcstr(cnt), {right - cw, y + 9}, 11, 0, icol)
+			draw_headphones(right - cw - 11, y + 14, 6, 1.8, icol)
 		}
 		y += 30
 	}
@@ -270,6 +282,24 @@ draw_sidebar :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase, sh: f32) {
 		draw_text(app.fonts.bold15, tcstr(label), {RAIL_W + 56, fy + 11}, 15, 0, COL_TEXT)
 		sub := c.me.is_admin ? fmt.tprintf("@%s · Admin", c.me.username) : fmt.tprintf("@%s", c.me.username)
 		draw_text(app.fonts.regular13, tcstr(sub), {RAIL_W + 56, fy + 30}, 13, 0, COL_SIDEBAR_DIM)
+
+		// Zahnrad → App-Einstellungen
+		gr := rl.Rectangle{RAIL_W + SIDEBAR_W - 44, fy + (FOOTER_H - 32)/2, 32, 32}
+		hovered := ui_hover(&app.ui, gr, .Base)
+		focused := tab_stop(app, anim_id(.Misc, 0x6EA5), gr, .Base, radius = 8)
+		t := anim_to(app, anim_id(.Misc, 0x6EA5), (hovered || focused) ? 1 : 0)
+		rrect(gr, 8, fade(COL_OVERLAY, t*0.08))
+		if focused {
+			draw_focus_ring(gr, 8)
+		}
+		draw_gear(gr.x + gr.width/2, gr.y + gr.height/2, 9, 1.8, mix(COL_SIDEBAR_DIM, COL_TEXT, t))
+		if hovered {
+			app.ui.cursor = .POINTING_HAND
+		}
+		tooltip(app, anim_id(.Misc, 0x6EA6), gr, "Einstellungen", .Base)
+		if ui_click(&app.ui, gr, .Base) || (focused && app.ui.tab_activate) {
+			open_settings(app)
+		}
 	}
 }
 

@@ -38,6 +38,12 @@ Call :: struct {
 	channel_id: u64,
 	key:        [shared.VOICE_KEY_LEN]byte,
 	members:    [dynamic]Call_Member,
+
+	// Für die Chat-Systemnachricht des Calls („X hat einen Call gestartet“ →
+	// beim Ende um die Dauer ergänzt).
+	starter_id: u64,
+	started_ms: i64,
+	msg_id:     u64,
 }
 
 g_calls: struct {
@@ -75,7 +81,7 @@ call_info_locked :: proc(call: ^Call) -> shared.Call_Info {
 	for m, i in call.members {
 		peers[i] = {user_id = m.user_id, ssrc = m.ssrc, muted = m.muted}
 	}
-	return {channel_id = call.channel_id, peers = peers}
+	return {channel_id = call.channel_id, peers = peers, msg_id = call.msg_id, started_ms = call.started_ms}
 }
 
 // ---------- Presence (unter g.mu rufen) ----------
@@ -122,13 +128,17 @@ handle_call_join :: proc(c: ^Client_Conn, w: shared.Wire) {
 
 	sync.lock(&g_calls.mu)
 	call := call_by_channel_locked(ch.id)
+	started := false
 	if call == nil {
 		call = new(Call)
 		g_calls.next_id += 1
 		call.id = g_calls.next_id
 		call.channel_id = ch.id
+		call.starter_id = c.user_id
+		call.started_ms = now_ms()
 		crypto.rand_bytes(call.key[:])
 		g_calls.by_id[call.id] = call
+		started = true
 	}
 	m := Call_Member{
 		user_id = c.user_id,
@@ -142,9 +152,34 @@ handle_call_join :: proc(c: ^Client_Conn, w: shared.Wire) {
 
 	info := call_info_locked(call)
 	call_id := call.id
+	started_ms := call.started_ms
 	key_hex := string(hex.encode(call.key[:], context.temp_allocator))
 	tok_hex := string(hex.encode(m.token[:], context.temp_allocator))
 	sync.unlock(&g_calls.mu)
+
+	// Neuer Call → Systemnachricht in den Channel (persistiert; das Ende
+	// trägt später call_end_ms nach). Mutationen an Calls laufen alle unter
+	// g.mu, daher darf call.msg_id nach dem Relock gesetzt werden.
+	if started {
+		msg := shared.Chat_Message{
+			id            = g.meta.next_message_id,
+			channel_id    = ch.id,
+			author_id     = c.user_id,
+			ts_ms         = started_ms,
+			call_start_ms = started_ms,
+		}
+		g.meta.next_message_id += 1
+		if store_message(ch, msg) {
+			save_meta()
+			sync.lock(&g_calls.mu)
+			call.msg_id = msg.id
+			sync.unlock(&g_calls.mu)
+			info.msg_id = msg.id
+			broadcast_members(ch, shared.Wire{kind = shared.EV_MESSAGE, message = msg}, nil)
+		} else {
+			fmt.printfln("[error] Call-Nachricht %d (Channel %d) konnte nicht gespeichert werden", msg.id, ch.id)
+		}
+	}
 
 	resp := shared.wire_ok(w.kind, w.seq)
 	resp.channel_id = ch.id
@@ -169,7 +204,14 @@ call_leave_everywhere :: proc(user_id: u64, by_conn: ^Client_Conn, skip_event_ch
 		channel_id: u64,
 		info:       shared.Call_Info,
 	}
+	Ended :: struct {
+		channel_id: u64,
+		msg_id:     u64,
+		starter_id: u64,
+		started_ms: i64,
+	}
 	lefts := make([dynamic]Left, context.temp_allocator)
+	ended := make([dynamic]Ended, context.temp_allocator)
 	was_in := false
 
 	sync.lock(&g_calls.mu)
@@ -195,6 +237,9 @@ call_leave_everywhere :: proc(user_id: u64, by_conn: ^Client_Conn, skip_event_ch
 		}
 	}
 	for call in drop {
+		if call.msg_id != 0 {
+			append(&ended, Ended{call.channel_id, call.msg_id, call.starter_id, call.started_ms})
+		}
 		delete_key(&g_calls.by_id, call.id)
 		delete(call.members)
 		free(call)
@@ -206,6 +251,30 @@ call_leave_everywhere :: proc(user_id: u64, by_conn: ^Client_Conn, skip_event_ch
 			call_state_event(l.channel_id, l.info, nil)
 		}
 	}
+
+	// Beendete Calls: Systemnachricht um die Endzeit ergänzen (persistiert)
+	// und als Edit-Event an die Mitglieder verteilen (Karte → „Dauer …“).
+	for e in ended {
+		ch := find_channel(e.channel_id)
+		if ch == nil {
+			continue
+		}
+		end := now_ms()
+		if !store_call_end(ch, e.msg_id, end) {
+			fmt.printfln("[error] Call-Ende %d (Channel %d) konnte nicht gespeichert werden", e.msg_id, ch.id)
+			continue
+		}
+		msg := shared.Chat_Message{
+			id            = e.msg_id,
+			channel_id    = e.channel_id,
+			author_id     = e.starter_id,
+			ts_ms         = e.started_ms,
+			call_start_ms = e.started_ms,
+			call_end_ms   = end,
+		}
+		broadcast_members(ch, shared.Wire{kind = shared.EV_MESSAGE_EDITED, message = msg}, nil)
+	}
+
 	if was_in {
 		call_presence_event(user_id)
 	}

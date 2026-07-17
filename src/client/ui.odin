@@ -15,17 +15,58 @@ RAIL_W :: 68
 SIDEBAR_W :: 260
 HEADER_H :: 52
 
+// Platz, den der Latenz-Indikator rechts in der Kopfzeile belegt —
+// der Chat-Header rückt (zusätzlich zu THEME_RESERVE) darum nach links.
+PING_RESERVE :: f32(84)
+
+// Dauerhafter Latenz-Indikator zum aktiven Server (TCP-Ping alle 5 s),
+// links neben dem Theme-Umschalter in der Kopfzeile.
+@(private = "file")
+draw_ping_indicator :: proc(app: ^App, c: ^Server_Conn, sw: f32) {
+	label := "…"
+	bars := 0
+	col := COL_TEXT_FAINT
+	if c.rtt_ms > 0 {
+		rtt := int(c.rtt_ms)
+		label = fmt.tprintf("%d ms", rtt)
+		switch {
+		case rtt < 80:
+			bars = 3
+			col = COL_ONLINE
+		case rtt < 180:
+			bars = 2
+			col = COL_YELLOW
+		case:
+			bars = 1
+			col = COL_RED
+		}
+	}
+	tw := rl.MeasureTextEx(app.fonts.regular13, tcstr(label), 13, 0).x
+	w := 20 + tw
+	r := rl.Rectangle{sw - 20 - THEME_BTN - 14 - w, (HEADER_H - 24)/2, w, 24}
+	cy := r.y + 16
+	for i in 0 ..< 3 {
+		bh := f32(4 + i*3)
+		bcol := i < bars ? col : fade(COL_OVERLAY, 0.18)
+		rrect({r.x + f32(i)*5, cy + 1 - bh, 3, bh}, 1.5, bcol)
+	}
+	draw_text(app.fonts.regular13, tcstr(label), {r.x + 20, r.y + (24 - 13)/2 - 1}, 13, 0, COL_TEXT_FAINT)
+	tooltip(app, anim_id(.Misc, 0x9143), r, fmt.tprintf("Latenz zu %s (TCP)", conn_label(c)), .Base)
+}
+
 ui_draw :: proc(app: ^App) {
 	ui_begin_frame(app, app.modal != .None || app.ctx.open || app.msg_menu.open)
 	zoom_shortcuts(app)
 
-	// Logische Bildschirmmaße (physisch / UI-Zoom)
+	// Logische Bildschirmmaße (physisch / UI-Zoom); die Call-Leiste am
+	// oberen Rand geht von der nutzbaren Höhe ab (Kamera-Offset, main.odin).
 	sw := f32(rl.GetScreenWidth()) / g_scale
-	sh := f32(rl.GetScreenHeight()) / g_scale
+	sh := f32(rl.GetScreenHeight()) / g_scale - app.bar_h
 
 	if len(app.conns) == 0 {
 		draw_welcome(app, sw, sh)
 		draw_theme_switch(app, sw, COL_PANEL_BG)
+		draw_call_bar(app, sw)
 		draw_toasts(app, sw, sh)
 		ui_draw_tooltip(app)
 		ui_end_frame(app)
@@ -65,7 +106,13 @@ ui_draw :: proc(app: ^App) {
 	case .Auth_Needed, .Setup_Needed, .Failed:
 		header_bg = COL_PANEL_BG
 	}
+	if phase == .Ready {
+		draw_ping_indicator(app, c, sw)
+	}
 	draw_theme_switch(app, sw, header_bg)
+
+	// Call-Leiste am oberen Rand (liegt bei negativen y über allem)
+	draw_call_bar(app, sw)
 
 	// Ausgegliedertes Call-Panel schwebt über allem außer Modals/Menüs
 	draw_call_popout(app, sw, sh)
@@ -143,6 +190,8 @@ global_shortcuts :: proc(app: ^App, c: ^Server_Conn, phase: Conn_Phase) {
 			app.ctx.open = false
 		} else if app.msg_menu.open {
 			app.msg_menu.open = false
+		} else if app.modal == .Settings && app.set_dd != 0 {
+			app.set_dd = 0 // offenes Geräte-Dropdown zuerst
 		} else if app.modal != .None {
 			close_modal(app)
 		} else if c.edit_msg_id != 0 {
@@ -188,7 +237,7 @@ draw_welcome :: proc(app: ^App, sw, sh: f32) {
 	float := f32(math.sin(rl.GetTime() * 1.6)) * 4
 	draw_logo(cx, base_y + 30 + float, 1, COL_PANEL_BG)
 
-	draw_text_centered(app.fonts.bold36, "ping", cx, base_y + 84, 36, COL_TEXT)
+	draw_text_centered(app.fonts.bold36, "flurfunk", cx, base_y + 84, 36, COL_TEXT)
 	draw_text_centered(app.fonts.regular15, "Dein Team. Dein Server. Deine Daten.",
 		cx, base_y + 132, 15, COL_TEXT_DIM)
 

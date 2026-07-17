@@ -89,7 +89,9 @@ UI_Ctx :: struct {
 ui_begin_frame :: proc(app: ^App, modal_open: bool) {
 	ui := &app.ui
 	m := rl.GetMousePosition()
-	ui.mouse = {m.x / g_scale, m.y / g_scale} // Maus in logischen Koordinaten
+	// Maus in logischen Koordinaten; die Call-Leiste verschiebt die UI um
+	// bar_h nach unten → über der Leiste wird y negativ (dort liegt sie).
+	ui.mouse = {m.x / g_scale, m.y / g_scale - app.bar_h}
 	ui.clicked = rl.IsMouseButtonPressed(.LEFT)
 	ui.rclicked = rl.IsMouseButtonPressed(.RIGHT)
 	ui.mouse_down = rl.IsMouseButtonDown(.LEFT)
@@ -742,6 +744,28 @@ button :: proc(app: ^App, r: rl.Rectangle, label: string, layer: UI_Layer, style
 	return ui_click(ui, r, layer) || (focused && ui.tab_activate)
 }
 
+// Schalter (an/aus) mit animiertem Knopf. id muss stabil sein.
+toggle_switch :: proc(app: ^App, r: rl.Rectangle, id: u64, on: bool, layer: UI_Layer) -> bool {
+	ui := &app.ui
+	hovered := ui_hover(ui, r, layer)
+	focused := tab_stop(app, id, r, layer, radius = r.height/2)
+	t := anim_to(app, id, on ? 1 : 0, 18)
+
+	rrect(r, r.height/2, mix(COL_RAIL_ITEM, COL_PRIMARY, t))
+	if focused {
+		draw_focus_ring(r, r.height/2)
+	}
+	pad := f32(3)
+	kd := r.height - pad*2
+	kx := r.x + pad + (r.width - kd - pad*2)*t
+	rl.DrawCircleV({kx + kd/2, r.y + r.height/2}, kd/2, mix(COL_SURFACE, COL_PRIMARY_FG, t))
+	rl.DrawCircleLinesV({kx + kd/2, r.y + r.height/2}, kd/2, COL_BORDER)
+	if hovered {
+		ui.cursor = .POINTING_HAND
+	}
+	return ui_click(ui, r, layer) || (focused && ui.tab_activate)
+}
+
 // --- Scrollbar (fade-in bei Aktivität/Hover, draggable) ---
 
 scrollbar :: proc(app: ^App, area: rl.Rectangle, content_h: f32, s: ^Scroll, layer: UI_Layer) {
@@ -874,6 +898,21 @@ draw_hangup :: proc(cx, cy, r, thick: f32, color: rl.Color) {
 	rl.DrawRing({cx, cy - r*0.55}, r - thick, r, 28, 152, 24, color)
 	rl.DrawCircleV({cx - r*0.86, cy - r*0.55 + r*0.45}, thick*0.72, color)
 	rl.DrawCircleV({cx + r*0.86, cy - r*0.55 + r*0.45}, thick*0.72, color)
+}
+
+// Zahnrad: Ring + acht Zähne (Settings).
+draw_gear :: proc(cx, cy, r, thick: f32, color: rl.Color) {
+	rl.DrawRing({cx, cy}, r*0.52 - thick, r*0.52, 0, 360, 24, color)
+	for i in 0 ..< 8 {
+		ang := (f32(i)*45 + 22.5) * math.PI / 180
+		dx := math.cos(ang)
+		dy := math.sin(ang)
+		rl.DrawLineEx(
+			{cx + dx*r*0.52, cy + dy*r*0.52},
+			{cx + dx*r, cy + dy*r},
+			thick + 0.8, color,
+		)
+	}
 }
 
 // „Ausgliedern“: Rahmen + Pfeil aus der Ecke nach oben rechts.

@@ -64,12 +64,17 @@ build_rows :: proc(app: ^App, cs: ^Channel_State, text_w: f32, edit_id: u64, edi
 		compact := false
 		if !sep_added && i > 0 {
 			prev := msgs[i-1]
-			compact = prev.author_id == m.author_id && m.ts_ms - prev.ts_ms < 3*60*1000
+			// Call-Karten brechen die Kompakt-Kette in beide Richtungen
+			compact = prev.author_id == m.author_id && m.ts_ms - prev.ts_ms < 3*60*1000 &&
+				prev.call_start_ms == 0 && m.call_start_ms == 0
 		}
 		h: f32
 		if edit_id != 0 && m.id == edit_id {
 			// Editor-Box ersetzt den Text (+ etwas Luft unter der Box)
 			h = compact ? edit_h + 10 : edit_h + 38
+		} else if m.call_start_ms > 0 {
+			// Call-Karte: Kopfzeile (Avatar/Name/Zeit) + Karte + Luft
+			h = 28 + CALL_CARD_H + 12
 		} else {
 			th := rich_text_height(app, m.text, text_w, m.edit_count > 0)
 			h = compact ? th + 6 : th + 34
@@ -162,7 +167,7 @@ draw_chat_header :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat: r
 			tw := rl.MeasureTextEx(app.fonts.bold18, tcstr(title), 18, 0).x
 			draw_headphones(x + 38 + tw + 16, chat.y + HEADER_H/2 - 1, 7, 2.2, COL_ONLINE)
 		}
-		cb := rl.Rectangle{chat.x + chat.width - 24 - THEME_RESERVE - 34, chat.y + (HEADER_H - 34)/2, 34, 34}
+		cb := rl.Rectangle{chat.x + chat.width - 24 - THEME_RESERVE - PING_RESERVE - 34, chat.y + (HEADER_H - 34)/2, 34, 34}
 		draw_call_header_button(app, c, cs, cb)
 	} else {
 		title := channel_title(c, cs)
@@ -177,9 +182,9 @@ draw_chat_header :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat: r
 		count_label := fmt.tprintf("%d", n)
 		clw := rl.MeasureTextEx(app.fonts.bold13, tcstr(count_label), 13, 0).x
 		total_w := stack_w + clw + 18
-		// THEME_RESERVE: der Theme-Umschalter sitzt ganz rechts in der Kopfzeile
+		// Rechts sitzen Theme-Umschalter + Latenz-Indikator → Platz freihalten
 		r := rl.Rectangle{
-			chat.x + chat.width - total_w - 24 - THEME_RESERVE,
+			chat.x + chat.width - total_w - 24 - THEME_RESERVE - PING_RESERVE,
 			chat.y + (HEADER_H - 34)/2, total_w + 12, 34,
 		}
 
@@ -396,6 +401,8 @@ draw_message_list :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, list: 
 				}
 				if editing {
 					draw_edit_row(app, c, cs, m, text_x, y + 28, text_w)
+				} else if m.call_start_ms > 0 {
+					draw_call_card(app, c, cs, m, text_x, y + 28, text_w)
 				} else {
 					rs := Rich_Sel{msg = m.id}
 					rich_text(app, m.text, text_x, y + 28, text_w, true, m.id, edited = m.edit_count > 0, sel = &rs)
@@ -443,11 +450,11 @@ draw_message_list :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, list: 
 
 MSG_PANEL_BTN :: f32(30)
 
-// Bekommt diese Nachricht ein Aktions-Panel? Nur eigene, und nicht die,
-// die gerade im Inline-Edit steckt.
+// Bekommt diese Nachricht ein Aktions-Panel? Nur eigene, nicht die im
+// Inline-Edit — und keine Call-Systemnachrichten (pflegt der Server).
 @(private = "file")
 msg_panel_exists :: proc(c: ^Server_Conn, m: shared.Chat_Message) -> bool {
-	return m.author_id == c.me.id && m.id != c.edit_msg_id
+	return m.author_id == c.me.id && m.id != c.edit_msg_id && m.call_start_ms == 0
 }
 
 // Panel-Rechteck einer Zeile mit Oberkante `y`: oben rechts, ragt halb über

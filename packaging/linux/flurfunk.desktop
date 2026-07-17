@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Flurfunk
+GenericName=Team-Chat
+Comment=Selbst gehosteter Team-Chat mit Voice-Calls
+Exec=flurfunk
+Icon=flurfunk
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=chat;team;voice;slack;flurfunk;
+StartupWMClass=Flurfunk

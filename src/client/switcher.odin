@@ -106,7 +106,7 @@ build_items :: proc(app: ^App, c: ^Server_Conn, query: string) -> []Switch_Item 
 
 draw_quick_switcher :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 	t := anim_to(app, anim_id(.Modal_Open, 1), 1, 16, initial = 0)
-	rl.DrawRectangleRec({0, 0, sw, sh}, fade(COL_SCRIM, t))
+	rl.DrawRectangleRec({0, -app.bar_h, sw, sh + app.bar_h}, fade(COL_SCRIM, t))
 
 	query := strings.trim_space(ti_text(&app.modal_input))
 	items := build_items(app, c, query)
