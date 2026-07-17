@@ -1,6 +1,8 @@
 # Release pipeline: runs when a v* tag is pushed onto main.
-# Builds Linux x86_64 + macOS arm64 + a Flatpak bundle, creates the GitHub
-# release, then publishes to AUR, Docker Hub and the Homebrew tap.
+# Builds Linux x86_64 + macOS arm64 + Windows x86_64 + a Flatpak bundle,
+# creates the GitHub release, then publishes to AUR, Docker Hub and the
+# Homebrew tap. The Windows client zip is a plain release asset — the website
+# download link just points at it; nothing is deployed for Windows.
 # Required secrets are documented in docs/RELEASING.md.
 name: Release
 
@@ -222,6 +224,75 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             "$dist.tar.gz" "Flurfunk-$version-macos-arm64.app.zip" --clobber
 
+  windows:
+    name: Windows x86_64 (Build, Upload)
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: ${{ env.ODIN_RELEASE }}
+      - name: MSVC-Umgebung (cl/lib + Odins Linker)
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: opus + speexdsp (vcpkg, statisch, /MT)
+        shell: pwsh
+        run: |
+          # Static libs with the static CRT so they match Odin's linking.
+          # rnnoise has no Windows vcpkg port — built separately below.
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            opus:x64-windows-static speexdsp:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed ($LASTEXITCODE)" }
+      - name: rnnoise bauen (kein vcpkg-Windows-Port)
+        shell: pwsh
+        run: packaging/ci/build-rnnoise-windows.ps1 "$env:GITHUB_WORKSPACE\winlibs"
+      - name: Audio-Libs einsammeln
+        shell: pwsh
+        run: |
+          # Odin's `foreign import "system:opus"` etc. link opus.lib /
+          # speexdsp.lib / rnnoise.lib by name — collect them on one LIBPATH.
+          $lib = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static\lib"
+          Copy-Item "$lib\opus.lib"     "$env:GITHUB_WORKSPACE\winlibs\opus.lib"     -Force
+          Copy-Item "$lib\speexdsp.lib" "$env:GITHUB_WORKSPACE\winlibs\speexdsp.lib" -Force
+          Get-ChildItem "$env:GITHUB_WORKSPACE\winlibs"
+      - name: miniaudio (Odin-Vendor) bauen
+        shell: pwsh
+        run: |
+          $root = (& odin root).Trim()
+          Push-Location "$root\vendor\miniaudio\src"
+          cmd /c build.bat
+          if ($LASTEXITCODE -ne 0) { throw "miniaudio build failed ($LASTEXITCODE)" }
+          Pop-Location
+      - name: Bauen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          $libs = "$env:GITHUB_WORKSPACE\winlibs"
+          # /SUBSYSTEM:windows + /ENTRY:mainCRTStartup: GUI app, no console
+          # window pops up, but Odin's normal `main` entry is kept.
+          odin build src/client -out:bin/flurfunk.exe -o:speed `
+            -extra-linker-flags:"/LIBPATH:$libs /SUBSYSTEM:windows /ENTRY:mainCRTStartup"
+          if ($LASTEXITCODE -ne 0) { throw "odin build failed ($LASTEXITCODE)" }
+          if (-not (Test-Path bin/flurfunk.exe)) { throw "no flurfunk.exe produced" }
+      - name: Smoke (startet und -version kehrt sauber zurück)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath bin\flurfunk.exe -ArgumentList '-version' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "flurfunk.exe -version exited $($p.ExitCode)" }
+      - name: Paketieren und ans Release hängen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
+          $dist = "flurfunk-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "dist/$dist" | Out-Null
+          Copy-Item bin/flurfunk.exe "dist/$dist/"
+          Copy-Item LICENSE, README.md "dist/$dist/"
+          Compress-Archive -Path "dist/$dist" -DestinationPath "$dist.zip" -Force
+          gh release upload "$env:GITHUB_REF_NAME" "$dist.zip" --clobber
+
   flatpak:
     name: Flatpak-Bundle bauen
     needs: linux
@@ -257,7 +328,7 @@ jobs:
 
   publish:
     name: Release veröffentlichen
-    needs: [linux, macos, flatpak]
+    needs: [linux, macos, windows, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
