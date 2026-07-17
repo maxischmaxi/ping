@@ -19,6 +19,17 @@ for lib in "$@"; do
 		tar xf rnnoise.tar.gz && cd rnnoise-0.2
 		model="rnnoise_data-$(cat model_version).tar.gz"
 		fetch "https://media.xiph.org/rnnoise/models/$model" "$model"
+		# vec_neon.h includes os_support.h, but the 0.2 tag doesn't ship the
+		# file (breaks the arm64/NEON build) — provide the macros it needs.
+		cat > src/os_support.h <<'EOH'
+#ifndef OS_SUPPORT_H
+#define OS_SUPPORT_H
+#include <string.h>
+#define OPUS_COPY(dst, src, n) (memcpy((dst), (src), (n)*sizeof(*(dst))))
+#define OPUS_MOVE(dst, src, n) (memmove((dst), (src), (n)*sizeof(*(dst))))
+#define OPUS_CLEAR(dst, n) (memset((dst), 0, (n)*sizeof(*(dst))))
+#endif
+EOH
 		./autogen.sh
 		;;
 	opus)

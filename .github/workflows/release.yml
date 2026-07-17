@@ -66,11 +66,23 @@ jobs:
       - name: System-Abhängigkeiten
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev autoconf automake libtool
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libgl1-mesa-dev autoconf automake libtool
       - name: Statische Audio-Libs bauen (opus, rnnoise, speexdsp)
         run: packaging/ci/build-audio-deps.sh "$HOME/audio-prefix" rnnoise opus speexdsp
       - name: miniaudio (Odin-Vendor) bauen
         run: make -C "$(odin root)/vendor/miniaudio/src"
+      - name: raylib gegen die Runner-glibc bauen
+        run: |
+          # Odin's prebuilt libraylib.a needs glibc >= 2.38 (__isoc23_*
+          # symbols) and no longer links on 22.04 — build the same raylib
+          # version from source against the runner's glibc and swap it in.
+          curl -fsSL --retry 3 -o raylib.tar.gz \
+            https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz
+          tar xf raylib.tar.gz
+          make -C raylib-6.0/src -j"$(nproc)" PLATFORM=PLATFORM_DESKTOP \
+            GLFW_LINUX_ENABLE_WAYLAND=FALSE
+          cp raylib-6.0/src/libraylib.a "$(odin root)/vendor/raylib/linux/libraylib.a"
       - name: Bauen
         run: |
           mkdir -p bin
