@@ -2,3 +2,4 @@ bin/
 flurfunk-data/
 ping-data/
 *.o
+packaging/docker/flurfunk-server

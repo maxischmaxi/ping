@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata. CI substitutes @VERSION@/@DATE@. Before a Flathub
+     submission, add a <screenshots> section (required by their linter). -->
+<component type="desktop-application">
+  <id>dev.jeschek.flurfunk</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Flurfunk</name>
+  <summary>Self-hosted team chat with voice calls</summary>
+  <summary xml:lang="de">Selbst gehosteter Team-Chat mit Voice-Calls</summary>
+  <description>
+    <p>
+      Flurfunk is a lightweight, self-hosted Slack alternative. The server
+      runs on your own hardware, all messages are stored encrypted, and
+      voice calls flow as individually encrypted UDP packets through a
+      relay that never stores anything.
+    </p>
+    <p>
+      Channels, direct messages, message editing with history, rich text
+      with syntax-highlighted code blocks, unread badges, presence — plus
+      voice calls with noise suppression (RNNoise), echo cancellation and
+      a voice gate. Native client, no browser, no Electron.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.jeschek.flurfunk.desktop</launchable>
+  <developer id="dev.jeschek">
+    <name>Max Jeschek</name>
+  </developer>
+  <url type="homepage">https://github.com/maxischmaxi/flurfunk</url>
+  <url type="bugtracker">https://github.com/maxischmaxi/flurfunk/issues</url>
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-audio">intense</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

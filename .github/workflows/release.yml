@@ -1,12 +1,15 @@
 # Release pipeline: runs when a v* tag is pushed onto main.
-# Builds Linux x86_64 + macOS arm64, creates the GitHub release,
-# then publishes to AUR and (optionally) the Homebrew tap.
+# Builds Linux x86_64 + macOS arm64 + a Flatpak bundle, creates the GitHub
+# release, then publishes to AUR, Docker Hub and the Homebrew tap.
 # Required secrets are documented in docs/RELEASING.md.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  # Re-run for an existing tag without re-tagging:
+  #   gh workflow run release.yml --ref v0.1.1
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -212,9 +215,42 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             "$dist.tar.gz" "Flurfunk-$version-macos-arm64.app.zip" --clobber
 
+  flatpak:
+    name: Flatpak-Bundle bauen
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: flatpak-builder + Runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+      - name: Bundle bauen und ans Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "flurfunk-$version-linux-x86_64.tar.gz" --dir /tmp/rel
+          sha="$(sha256sum /tmp/rel/*.tar.gz | cut -d' ' -f1)"
+          work=/tmp/fp
+          mkdir -p "$work"
+          sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$sha/g" \
+            packaging/flatpak/dev.jeschek.flurfunk.yml.in > "$work/dev.jeschek.flurfunk.yml"
+          sed -e "s/@VERSION@/$version/g" -e "s/@DATE@/$(date -u +%F)/g" \
+            packaging/flatpak/dev.jeschek.flurfunk.metainfo.xml.in > "$work/dev.jeschek.flurfunk.metainfo.xml"
+          cp packaging/flatpak/dev.jeschek.flurfunk.desktop "$work/"
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --repo="$work/repo" "$work/build" "$work/dev.jeschek.flurfunk.yml"
+          flatpak build-bundle "$work/repo" "flurfunk-$version-x86_64.flatpak" dev.jeschek.flurfunk
+          gh release upload "$GITHUB_REF_NAME" "flurfunk-$version-x86_64.flatpak" --clobber
+
   publish:
     name: Release veröffentlichen
-    needs: [linux, macos]
+    needs: [linux, macos, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -259,6 +295,33 @@ jobs:
           commit_message: "Update to ${{ github.ref_name }}"
           test: true
           ssh_keyscan_types: rsa,ecdsa,ed25519
+
+  docker:
+    name: Docker-Image (Docker Hub)
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ] || [ -z "$DOCKERHUB_USERNAME" ]; then
+            echo "::notice::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN nicht gesetzt — Docker-Push übersprungen (siehe docs/RELEASING.md)"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "flurfunk-$version-linux-x86_64.tar.gz" --dir /tmp/rel
+          tar -C /tmp/rel -xf /tmp/rel/*.tar.gz
+          cp "/tmp/rel/flurfunk-$version-linux-x86_64/flurfunk-server" packaging/docker/
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          img="$DOCKERHUB_USERNAME/flurfunk-server"
+          docker build --build-arg "VERSION=$version" \
+            -t "$img:$version" -t "$img:latest" packaging/docker
+          docker push "$img:$version"
+          docker push "$img:latest"
 
   homebrew:
     name: Homebrew-Tap aktualisieren

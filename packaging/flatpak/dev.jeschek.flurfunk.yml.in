@@ -1,0 +1,41 @@
+# Flatpak manifest template. CI substitutes @VERSION@/@SHA256@ and builds a
+# bundle release asset; the same generated manifest is what gets submitted
+# to Flathub (see docs/FLATHUB.md). x-checker-data lets Flathub's
+# external-data-checker auto-PR new releases; flatpak-builder ignores it.
+app-id: dev.jeschek.flurfunk
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: flurfunk
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --socket=pulseaudio
+  - --device=dri
+modules:
+  - name: flurfunk
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 flurfunk /app/bin/flurfunk
+      - install -Dm755 flurfunk-server /app/bin/flurfunk-server
+      - install -Dm644 dev.jeschek.flurfunk.desktop /app/share/applications/dev.jeschek.flurfunk.desktop
+      - install -Dm644 dev.jeschek.flurfunk.metainfo.xml /app/share/metainfo/dev.jeschek.flurfunk.metainfo.xml
+      - |
+        for s in 16 32 48 64 128 256 512; do
+          install -Dm644 "icons/flurfunk-$s.png" "/app/share/icons/hicolor/${s}x${s}/apps/dev.jeschek.flurfunk.png"
+        done
+      - install -Dm644 icons/flurfunk.svg /app/share/icons/hicolor/scalable/apps/dev.jeschek.flurfunk.svg
+    sources:
+      - type: archive
+        url: https://github.com/maxischmaxi/flurfunk/releases/download/v@VERSION@/flurfunk-@VERSION@-linux-x86_64.tar.gz
+        sha256: "@SHA256@"
+        x-checker-data:
+          type: json
+          url: https://api.github.com/repos/maxischmaxi/flurfunk/releases/latest
+          version-query: .tag_name | sub("^v"; "")
+          url-query: .assets[] | select(.name == "flurfunk-" + $version + "-linux-x86_64.tar.gz") | .browser_download_url
+      - type: file
+        path: dev.jeschek.flurfunk.desktop
+      - type: file
+        path: dev.jeschek.flurfunk.metainfo.xml

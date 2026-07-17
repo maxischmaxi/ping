@@ -8,8 +8,8 @@ distributieren sollten oder könnten — grob nach Aufwand/Nutzen sortiert.
 
 | Kanal | Zielgruppe | Aufwand | Notizen |
 |-------|-----------|---------|---------|
-| **GHCR / Docker Hub** (Server-Image) | Self-Hoster, Homelabs, NAS | gering | `flurfunk-server` ist ein statisch-freundliches Single-Binary — ideal für ein Mini-Image (`FROM debian:stable-slim` oder distroless). Docker-Compose-Beispiel dazu; öffnet die Tür zu Unraid/CasaOS/Portainer-Katalogen. |
-| **Flathub** (Flatpak, Client) | Linux-Desktop generell, auch immutable Distros (Steam Deck, Silverblue) | mittel | Der wichtigste Linux-Desktop-Kanal neben AUR. Braucht Manifest (JSON/YAML), App-ID `dev.jeschek.flurfunk`, AppStream-Metadaten + Icon. Audio läuft über PipeWire/Pulse-Portal problemlos. |
+| **GHCR / Docker Hub** (Server-Image) — ✅ Docker Hub seit v0.1.1 (`maxischmaxi/flurfunk-server`) | Self-Hoster, Homelabs, NAS | gering | `flurfunk-server` ist ein statisch-freundliches Single-Binary — ideal für ein Mini-Image (`FROM debian:stable-slim` oder distroless). Docker-Compose-Beispiel dazu; öffnet die Tür zu Unraid/CasaOS/Portainer-Katalogen. |
+| **Flathub** (Flatpak, Client) — 🔶 Bundle als Release-Asset, Einreichung vorbereitet (docs/FLATHUB.md) | Linux-Desktop generell, auch immutable Distros (Steam Deck, Silverblue) | mittel | Der wichtigste Linux-Desktop-Kanal neben AUR. Braucht Manifest (JSON/YAML), App-ID `dev.jeschek.flurfunk`, AppStream-Metadaten + Icon. Audio läuft über PipeWire/Pulse-Portal problemlos. |
 | **homebrew-core** | macOS-Nutzer ohne Tap | mittel | Erst sinnvoll, wenn das Projekt „notable" ist (Stars). Muss aus Quellcode bauen — siehe [HOMEBREW.md](HOMEBREW.md), Weg 2. |
 
 ## Mittlere Priorität

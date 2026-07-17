@@ -7,13 +7,22 @@ sobald ein `v*`-Tag gepusht wird, der auf `main` liegt. Sie:
    `src/shared/version.odin` passt,
 2. legt das GitHub-Release als Pre-Release an,
 3. baut **Linux x86_64** (Server + Client, inkl. Headless-Tests:
-   Audio-DSP, Protokoll-Smoke, Persistenz) und **macOS arm64**
+   Audio-DSP, Protokoll-Smoke, Persistenz), **macOS arm64**
    (Server + Client + `Flurfunk.app`, signiert und — mit Apple-Secrets —
-   notarisiert),
+   notarisiert) und ein **Flatpak-Bundle** (aus dem Linux-Tarball,
+   `packaging/flatpak/`),
 4. hängt die Artefakte ans Release, veröffentlicht es und ergänzt
    `SHA256SUMS.txt`,
-5. aktualisiert das AUR-Paket `flurfunk-bin` und (falls
-   `HOMEBREW_TAP_TOKEN` gesetzt) die Homebrew-Tap-Formula.
+5. aktualisiert das AUR-Paket `flurfunk-bin`, pusht das
+   **Docker-Image** `flurfunk-server` zu Docker Hub (falls
+   Docker-Secrets gesetzt) und aktualisiert die Homebrew-Tap-Formula.
+
+Erneuter Lauf für einen bestehenden Tag (z. B. nachdem ein Secret
+nachgetragen wurde), ohne den Tag neu zu setzen:
+
+```sh
+gh workflow run release.yml --ref v0.1.1
+```
 
 Die Audio-Bibliotheken (opus, rnnoise, speexdsp) werden in der CI statisch
 eingelinkt (`packaging/ci/build-audio-deps.sh`) — die Binaries brauchen
@@ -48,7 +57,33 @@ Das Tap `maxischmaxi/homebrew-tap` existiert, die Pipeline aktualisiert
 die Formula über den Deploy-Key im Secret `HOMEBREW_TAP_SSH_KEY`
 (privater Teil: `~/.ssh/tap_flurfunk`). Details: [HOMEBREW.md](HOMEBREW.md).
 
-### 4. macOS-Signierung und Notarisierung (optional, empfohlen)
+### 4. Docker Hub (ein Token nötig)
+
+Der `docker`-Job pusht `docker.io/<username>/flurfunk-server` mit den
+Tags `<version>` und `latest`. Er überspringt sich selbst, solange die
+Secrets fehlen. Einrichtung:
+
+1. Auf <https://hub.docker.com> → **Account Settings → Personal access
+   tokens → Generate new token**: Name z. B. `flurfunk-ci`, Berechtigung
+   **Read & Write** (Expiration nach Geschmack).
+2. Beide Secrets setzen:
+   ```sh
+   gh secret set DOCKERHUB_USERNAME -R maxischmaxi/flurfunk
+   gh secret set DOCKERHUB_TOKEN    -R maxischmaxi/flurfunk
+   ```
+
+Ein `docker login` auf dem eigenen Rechner reicht **nicht** — die
+Pipeline braucht ein eigenes Token. PATs lassen sich bei Docker Hub
+nicht per API erzeugen, nur im Web-UI.
+
+### 5. Flathub (einmalige Einreichung, keine Secrets)
+
+Das Flatpak-**Bundle** baut die Pipeline ohne weitere Einrichtung. Die
+Aufnahme in den **Flathub-Store** läuft über einen einmaligen, menschlich
+geprüften PR — eine CI kann dort nichts pushen. Schritte und Details:
+[FLATHUB.md](FLATHUB.md).
+
+### 6. macOS-Signierung und Notarisierung (optional, empfohlen)
 
 Ohne Apple-Secrets signiert die Pipeline ad-hoc — die App läuft, aber
 Gatekeeper zeigt beim ersten Start eine Warnung (Nutzer: Rechtsklick →
@@ -86,6 +121,7 @@ Gatekeeper-Warnung mehr.
 | `AUR_SSH_PRIVATE_KEY` | für AUR | Push nach aur.archlinux.org | ✅ gesetzt |
 | `AUR_USERNAME` / `AUR_EMAIL` | für AUR | Commit-Autor der AUR-Commits | ✅ gesetzt |
 | `HOMEBREW_TAP_SSH_KEY` | für Homebrew | Deploy-Key: Formula im Tap aktualisieren | ✅ gesetzt |
+| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | für Docker | Image-Push zu Docker Hub | ⬜ |
 | `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD` | optional | Developer-ID-Signierung | ⬜ |
 | `APPLE_ID` / `APPLE_TEAM_ID` / `APPLE_APP_PASSWORD` | optional | Notarisierung | ⬜ |
 

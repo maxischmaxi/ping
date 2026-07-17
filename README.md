@@ -84,9 +84,15 @@ yay -S flurfunk-bin        # oder: paru -S flurfunk-bin
 
 ### Andere Linux-Distributionen
 
-Tarball von den [Releases](https://github.com/maxischmaxi/flurfunk/releases/latest)
-laden und entpacken — die Binaries brauchen nur glibc und X11, alle
-Audio-Bibliotheken sind bereits enthalten:
+**Flatpak** (empfohlen): das Bundle von den
+[Releases](https://github.com/maxischmaxi/flurfunk/releases/latest) laden und
+
+```sh
+flatpak install --user ./flurfunk-<version>-x86_64.flatpak
+```
+
+**Tarball**: laden und entpacken — die Binaries brauchen nur glibc und
+X11, alle Audio-Bibliotheken sind bereits enthalten:
 
 ```sh
 tar xf flurfunk-<version>-linux-x86_64.tar.gz
@@ -97,11 +103,22 @@ Alle Downloads lassen sich gegen die `SHA256SUMS.txt` des Releases prüfen.
 
 ## Server aufsetzen
 
-Der Server ist ein einzelnes Binary — kein Docker, keine Datenbank:
+Der Server ist ein einzelnes Binary — keine Datenbank, kein Drumherum:
 
 ```sh
 flurfunk-server -port 7788 -data ./flurfunk-data
 ```
+
+Oder per **Docker** (Host-Netzwerk empfohlen, damit die UDP-Voice-Pakete
+ohne NAT-Umwege fließen):
+
+```sh
+docker run -d --name flurfunk --network host \
+  -v flurfunk-data:/data maxischmaxi/flurfunk-server:latest
+```
+
+Alternativ mit Port-Mapping: `-p 7788:7788/tcp -p 7788:7788/udp`
+(beide Protokolle!) statt `--network host`.
 
 Beim ersten Start erzeugt er seine Schlüssel selbst. Wer sich als
 **erste Person** verbindet, wird automatisch **Administrator** und richtet
