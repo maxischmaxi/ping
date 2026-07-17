@@ -386,6 +386,33 @@ draw_settings_modal :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 		{x + 184, y + 11}, 13, 0, COL_TEXT_FAINT)
 	y += 40
 
+
+	draw_text(app.fonts.bold13, "FENSTER", {x, y}, 13, 0, COL_TEXT_FAINT)
+	y += 22
+	y += toggle_row(app, x, y, w, "Beim Schließen im Hintergrund weiterlaufen",
+		"X versteckt das Fenster nur — Flurfunk bleibt im Tray bzw. der Menüleiste",
+		&app.cfg.quit_on_close, true, 4)
+	if !app_tray_available() && !app.cfg.quit_on_close {
+		draw_text(app.fonts.regular13, tcstr(trim_label(app, app.fonts.regular13, 13,
+			"Kein System-Tray gefunden — beim Schließen wird die App trotzdem beendet.", w)),
+			{x, y}, 13, 0, COL_TEXT_FAINT)
+	}
+	y += 30
+
+	draw_text(app.fonts.bold13, "BENACHRICHTIGUNGEN", {x, y}, 13, 0, COL_TEXT_FAINT)
+	y += 22
+	y += toggle_row(app, x, y, w, "Desktop-Benachrichtigungen",
+		"Neue Nachrichten und Anrufe melden, wenn Flurfunk im Hintergrund ist",
+		&app.cfg.notify_off, true, 5)
+	y += 8
+
+	if button(app, {x, y, 210, 36}, "Testbenachrichtigung", .Modal, id_salt = 0x7E57F) {
+		if !app_notify_test(app) {
+			toast(app, .Error, "Benachrichtigungen sind hier nicht verfügbar")
+		}
+	}
+	y += 52
+
 	app.set_content_h = y - content_top
 	scissor_end()
 	scrollbar(app, view, app.set_content_h, &app.set_scroll, .Modal)

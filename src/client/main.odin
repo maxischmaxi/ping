@@ -30,18 +30,39 @@ main :: proc() {
 		rl.SetWindowIcon(icon)
 		rl.UnloadImage(icon)
 	}
-	rl.SetTargetFPS(240) // Obergrenze; VSync taktet real
+	rl.SetTargetFPS(TARGET_FPS) // Obergrenze; VSync taktet real
 	rl.SetExitKey(.KEY_NULL)
 
 	app: App
 	app_init(&app)
 	defer sys_theme_stop()
+	app_tray_init(&app)
+	defer app_tray_shutdown()
 
 	title_unread := -1
 
-	for !rl.WindowShouldClose() {
+	for !app.want_quit {
+		// X geklickt → je nach Setting verstecken statt beenden (tray.odin)
+		if rl.WindowShouldClose() {
+			app_handle_close(&app)
+			if app.want_quit {
+				break
+			}
+		}
+
 		app.dt = min(rl.GetFrameTime(), 1.0/20.0) // Ruckler nicht überspringen lassen
 		app_poll(&app)
+		app_tray_tick(&app)
+
+		if app.hidden {
+			// Versteckt: kein UI-Rendering — nur Events pumpen (HIDDEN_FPS
+			// taktet), Netzwerk/Calls/Benachrichtigungen laufen weiter.
+			rl.BeginDrawing()
+			rl.EndDrawing()
+			free_all(context.temp_allocator)
+			continue
+		}
+
 		theme_frame(&app) // Farben für diesen Frame festlegen (vor ClearBackground)
 
 		// Fenstertitel mit Unread-Zähler

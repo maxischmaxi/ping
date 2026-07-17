@@ -30,6 +30,10 @@ Config :: struct {
 	aec_off:     bool   `json:"aec_off,omitempty"`,
 	gate_off:    bool   `json:"gate_off,omitempty"`,
 
+	// Desktop-Verhalten (ebenfalls negativ benannt: Nullwert = Default).
+	quit_on_close: bool `json:"quit_on_close,omitempty"`, // true = X beendet die App statt Tray
+	notify_off:    bool `json:"notify_off,omitempty"`,    // true = keine Desktop-Benachrichtigungen
+
 	servers:    [dynamic]Config_Server `json:"servers"`,
 }
 

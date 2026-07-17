@@ -71,7 +71,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
             libxinerama-dev libxi-dev libgl1-mesa-dev autoconf automake libtool \
-            libcurl4-openssl-dev
+            libcurl4-openssl-dev dbus
       - name: Statische Audio-Libs bauen (opus, rnnoise, speexdsp)
         run: packaging/ci/build-audio-deps.sh "$HOME/audio-prefix" rnnoise opus speexdsp
       - name: miniaudio (Odin-Vendor) bauen
@@ -95,15 +95,17 @@ jobs:
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
           bin/flurfunk-server -version
           bin/flurfunk -version
-      - name: Tests (Audio-DSP, Avatar-Pipeline, Protokoll-Smoke, Persistenz)
+      - name: Tests (Audio-DSP, Avatar-Pipeline, Tray/D-Bus, Protokoll-Smoke, Persistenz)
         run: |
           odin build tests/audio -out:bin/audiotest \
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
           odin build tests/avatar -out:bin/avatartest
+          odin build tests/tray -out:bin/traytest
           odin build tests/smoke -out:bin/smoke
           odin build tests/persist -out:bin/persist
           bin/audiotest
           bin/avatartest
+          timeout 60 dbus-run-session -- bin/traytest
 
           bin/flurfunk-server -port 7999 -data "$RUNNER_TEMP/data" & srv=$!
           for _ in $(seq 50); do (echo >/dev/tcp/127.0.0.1/7999) 2>/dev/null && break; sleep 0.2; done

@@ -47,11 +47,13 @@ src/shared/     Wire-Protokoll (JSON), Framing, Noise-Secure-Channel, Voice-Pake
 src/server/     Server: Auth, Channels/DMs, verschlüsselte Persistenz, Voice-SFU
 src/client/     raylib-Client: Slack-Layout, Multi-Server, Rich-Text, Call-UI
 src/audio/      Voice-DSP: Opus/RNNoise/Speex-Bindings, Jitter-Buffer, Engine
+src/desktop/    Systemtray + Desktop-Benachrichtigungen (SNI/D-Bus, NSStatusItem, Shell_NotifyIcon)
 tests/smoke/    Headless-Protokolltest inkl. UDP-SFU + Profilbilder (frischer Server)
 tests/persist/  Persistenz-Test (Server-Neustart gegen Smoke-Datenbestand)
 tests/audio/    Headless-DSP-Test (Opus-Roundtrip, FEC/PLC, Jitter, VAD, AEC)
 tests/avatar/   Headless-Test der Profilbild-Pipeline (PNG-Export/Crop/Resize)
 tests/audiodev/ Geräte-Check mit echter Audio-Hardware (nicht für CI)
+tests/tray/     Headless-Tray-Test (Mock-Watcher + Mock-Notifd auf isoliertem D-Bus)
 assets/fonts/   Inter + Liberation Mono (werden ins Client-Binary eingebettet)
 packaging/      CI-Buildscripts, PKGBUILD, Homebrew-Formula, macOS-Bundle
 docs/           Release-, Homebrew- und Distributions-Doku
@@ -64,14 +66,29 @@ odin build tests/smoke -out:bin/smoke
 odin build tests/persist -out:bin/persist
 odin build tests/audio -out:bin/audiotest
 odin build tests/avatar -out:bin/avatartest
+odin build tests/tray -out:bin/traytest
 
 bin/audiotest                                            # reine DSP-Pipeline
 bin/avatartest                                           # Profilbild-Bake-Kette
+timeout 60 dbus-run-session -- bin/traytest              # Tray/Notifications (isolierter Bus)
 bin/flurfunk-server -port 7999 -data /tmp/flurfunk-test &  # frisches Datenverzeichnis!
 timeout 30 bin/smoke 127.0.0.1:7999
 # Server neu starten (gleiches -data), dann:
 timeout 30 bin/persist 127.0.0.1:7999
 ```
+
+## Systemtray & Benachrichtigungen
+
+`src/desktop` ist bewusst raylib-frei (headless testbar). Linux spricht
+StatusNotifierItem + com.canonical.dbusmenu + org.freedesktop.Notifications
+direkt über libdbus-1, das zur Laufzeit per `dlopen` geladen wird — es gibt
+also keine Build- oder Paketabhängigkeit auf D-Bus. Ohne erreichbaren
+StatusNotifierWatcher (GNOME ohne AppIndicator-Erweiterung) meldet
+`tray_available()` false und der Client beendet sich beim Schließen wie
+gewohnt, statt unerreichbar im Hintergrund zu hängen. macOS nutzt
+NSStatusItem/NSUserNotification über die ObjC-Runtime (ebenfalls dlopen,
+getypte objc_msgSend-Aufrufe), Windows Shell_NotifyIcon mit einem
+Message-only-Fenster.
 
 ## Sicherheitsmodell
 
