@@ -55,6 +55,8 @@ tests/avatar/   Headless-Test der Profilbild-Pipeline (PNG-Export/Crop/Resize)
 tests/audiodev/ Geräte-Check mit echter Audio-Hardware (nicht für CI)
 tests/tray/     Headless-Tray-Test (Mock-Watcher + Mock-Notifd auf isoliertem D-Bus)
 assets/fonts/   Inter + Liberation Mono (werden ins Client-Binary eingebettet)
+assets/icons/   Lucide-SVGs (ISC) + generate.py → src/client/lucide_gen.odin
+                (UI-Icons als Polylinien; Renderer: src/client/lucide.odin)
 packaging/      CI-Buildscripts, PKGBUILD, Homebrew-Formula, macOS-Bundle
 docs/           Release-, Homebrew- und Distributions-Doku
 ```

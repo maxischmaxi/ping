@@ -378,7 +378,7 @@ draw_call_body :: proc(app: ^App, x, y, w: f32, popout: bool) {
 	// Auflegen (rechtsbündig, rot)
 	hr := rl.Rectangle{x + w - 46, by, 46, 30}
 	hclick, _ := call_icon_button(app, hr, anim_id(.Call, 0xDEAD ~ salt), fade(COL_RED, 0.88), COL_RED, "Call verlassen")
-	draw_hangup(hr.x + hr.width/2, hr.y + hr.height/2 + 4, 10, 3, COL_WHITE)
+	draw_hangup(hr.x + hr.width/2, hr.y + hr.height/2, 10, 3, COL_WHITE)
 	if hclick {
 		call_hangup(app)
 	}
@@ -537,7 +537,7 @@ draw_call_bar :: proc(app: ^App, sw: f32) {
 	hang_w := f32(92)
 	hr := rl.Rectangle{sw - 16 - hang_w, by, hang_w, 30}
 	hclick, _ := call_icon_button(app, hr, anim_id(.Call, 0xBA42), fade(COL_RED, 0.88), COL_RED, "Call verlassen")
-	draw_hangup(hr.x + 18, hr.y + hr.height/2 + 4, 9, 2.8, COL_WHITE)
+	draw_hangup(hr.x + 18, hr.y + hr.height/2, 9, 2.8, COL_WHITE)
 	draw_text(app.fonts.bold13, "Auflegen", {hr.x + 32, hr.y + 8}, 13, 0, COL_WHITE)
 	if hclick {
 		call_hangup(app)

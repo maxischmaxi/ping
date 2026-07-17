@@ -584,7 +584,7 @@ draw_failed :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 
 	y := p.y + 30
 	rl.DrawCircleV({cx, y + 22}, 24, fade(COL_RED, 0.12))
-	draw_rune_centered(app.fonts.bold24, '!', cx, y + 22, COL_RED)
+	draw_icon(.Triangle_Alert, cx, y + 23, 24, COL_RED, 2.2)
 	y += 62
 
 	draw_text_centered(app.fonts.bold18, c.err_text != "" ? c.err_text : "Verbindung fehlgeschlagen", cx, y, 18, COL_TEXT)

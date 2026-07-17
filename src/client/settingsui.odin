@@ -178,11 +178,8 @@ dd_field :: proc(app: ^App, r: rl.Rectangle, label: string, open: bool, which: i
 		{r.x + 12, r.y + (r.height - 15)/2 - 1}, 15, 0, COL_TEXT)
 
 	// Chevron (klappt bei offener Liste nach oben)
-	cx := r.x + r.width - 20
-	cy := r.y + r.height/2
-	d: f32 = open ? -3 : 3
-	rl.DrawLineEx({cx - 5, cy - d/2 - 1}, {cx, cy + d/2 + 1}, 1.8, COL_TEXT_DIM)
-	rl.DrawLineEx({cx, cy + d/2 + 1}, {cx + 5, cy - d/2 - 1}, 1.8, COL_TEXT_DIM)
+	draw_icon(.Chevron_Down, r.x + r.width - 20, r.y + r.height/2, 14,
+		COL_TEXT_DIM, 1.8, open ? 180 : 0)
 
 	if hovered {
 		app.ui.cursor = .POINTING_HAND

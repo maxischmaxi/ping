@@ -165,7 +165,7 @@ draw_quick_switcher :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 			draw_avatar(app, it.seed, ix, ly + (row_h - 30)/2, 30, presence = true, online = it.online, c = c, uid = it.user_id)
 		} else {
 			rl.DrawCircleV({ix + 15, ly + row_h/2}, 15, COL_PANEL_BG)
-			draw_rune_centered(app.fonts.bold15, '#', ix + 15, ly + row_h/2, COL_TEXT_DIM)
+			draw_icon(.Hash, ix + 15, ly + row_h/2, 15, COL_TEXT_DIM, 1.8)
 		}
 		draw_text(app.fonts.bold15, tcstr(it.label), {ix + 42, ly + 9}, 15, 0, COL_TEXT)
 		draw_text(app.fonts.regular13, tcstr(it.sub), {ix + 42, ly + 28}, 13, 0, COL_TEXT_FAINT)

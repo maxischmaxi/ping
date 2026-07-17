@@ -851,154 +851,81 @@ draw_rune_centered :: proc(font: rl.Font, r: rune, cx, cy: f32, color: rl.Color)
 	rl.DrawTextCodepoint(font, r, {x, y}, f32(font.baseSize) * inv, color)
 }
 
-// Plus-Icon aus zwei Balken — pixelgenau zentriert, kein Font-Glyph.
+// --- Icon-Wrapper (Lucide) ---
+// Alle Symbol-Icons kommen aus dem Lucide-Set (lucide.odin/draw_icon).
+// Die Wrapper behalten die alten Signaturen und Größen-Semantiken bei —
+// die Skalierungsfaktoren gleichen die Inhalts-Spannweite des jeweiligen
+// Lucide-Icons in der 24er-Box aus, damit die optische Größe der alten
+// Handzeichnungen erhalten bleibt.
+
+// Plus („plus“). half = halbe Strichlänge.
 draw_plus :: proc(cx, cy, half, thick: f32, color: rl.Color) {
-	x := math.round(cx)
-	y := math.round(cy)
-	rl.DrawRectangleRec({x - half, y - thick/2, half*2, thick}, color)
-	rl.DrawRectangleRec({x - thick/2, y - half, thick, half*2}, color)
+	draw_icon(.Plus, cx, cy, half * 3.4, color, thick)
 }
 
-// Häkchen aus zwei Strichen (✓ liegt nicht im Font-Atlas).
-// Der Punkt im Knick füllt die Lücke, die zwei dicke Linien dort lassen.
+// Häkchen („check“). size = Breite des Hakens.
 draw_check :: proc(cx, cy, size, thick: f32, color: rl.Color) {
-	a := rl.Vector2{cx - size*0.46, cy + size*0.02}
-	b := rl.Vector2{cx - size*0.14, cy + size*0.34}
-	c := rl.Vector2{cx + size*0.48, cy - size*0.34}
-	rl.DrawLineEx(a, b, thick, color)
-	rl.DrawLineEx(b, c, thick, color)
-	rl.DrawCircleV(b, thick/2, color)
+	draw_icon(.Check, cx, cy, size * 1.4, color, thick)
 }
 
-// X-Icon aus zwei gekreuzten Strichen (Schließen/Abbrechen).
+// X („x“, Schließen/Abbrechen). size = Diagonale-Spannweite.
 draw_cross :: proc(cx, cy, size, thick: f32, color: rl.Color) {
-	h := size / 2
-	rl.DrawLineEx({cx - h, cy - h}, {cx + h, cy + h}, thick, color)
-	rl.DrawLineEx({cx - h, cy + h}, {cx + h, cy - h}, thick, color)
+	draw_icon(.X, cx, cy, size * 2, color, thick)
 }
 
-// Drei vertikale Punkte („Mehr"-Icon).
+// Drei vertikale Punkte („ellipsis-vertical“). gap = Punktabstand.
 draw_dots_v :: proc(cx, cy, gap, r: f32, color: rl.Color) {
-	for i in -1 ..= 1 {
-		rl.DrawCircleV({cx, cy + f32(i)*gap}, r, color)
-	}
+	size := gap * 24.0 / 7.0
+	draw_icon(.Ellipsis_Vertical, cx, cy, size, color, max(2*(r - size/24), 1.2))
 }
 
-// Kopfhörer: Bügel (oberer Halbring) + zwei Muscheln. `r` ≈ halbe Breite.
-// (raylib-Sektorwinkel: 0° = rechts (+X), positiv im Uhrzeigersinn)
+// Kopfhörer („headphones“). r ≈ halbe Breite.
 draw_headphones :: proc(cx, cy, r, thick: f32, color: rl.Color) {
-	rl.DrawRing({cx, cy + r*0.25}, r - thick, r, 180, 360, 24, color)
-	ear_w := max(thick + 1.5, r*0.42)
-	ear_h := r * 0.8
-	rrect({cx - r - ear_w*0.35, cy + r*0.25 - ear_h*0.25, ear_w, ear_h}, ear_w/2, color)
-	rrect({cx + r - ear_w*0.65, cy + r*0.25 - ear_h*0.25, ear_w, ear_h}, ear_w/2, color)
+	draw_icon(.Headphones, cx, cy, r * 3.1, color, thick)
 }
 
-// Mikrofon: Kapsel + Auffangbügel + Ständer; optional durchgestrichen.
-// `bg` ist die Fläche unter dem Icon (Kontur des Streichstrichs).
+// Mikrofon („mic“ / „mic-off“). bg wird nicht mehr gebraucht (das
+// Off-Icon bringt seinen Streichstrich selbst mit).
 draw_mic :: proc(cx, cy, size, thick: f32, color, bg: rl.Color, crossed: bool) {
-	caps_w := size * 0.42
-	caps_h := size * 0.72
-	rrect({cx - caps_w/2, cy - size*0.55, caps_w, caps_h}, caps_w/2, color)
-	rl.DrawRing({cx, cy + size*0.02}, size*0.38 - thick, size*0.38, 0, 180, 20, color)
-	rl.DrawLineEx({cx, cy + size*0.4}, {cx, cy + size*0.56}, thick, color)
-	rl.DrawLineEx({cx - size*0.24, cy + size*0.56}, {cx + size*0.24, cy + size*0.56}, thick, color)
-	if crossed {
-		h := size * 0.62
-		rl.DrawLineEx({cx - h + 2, cy - h}, {cx + h + 2, cy + h}, thick + 2, bg)
-		rl.DrawLineEx({cx - h, cy - h}, {cx + h, cy + h}, thick, color)
-	}
+	_ = bg
+	draw_icon(crossed ? Icon.Mic_Off : Icon.Mic, cx, cy, size * 1.2, color, thick)
 }
 
-// „Auflegen“: flach liegender Hörer (Bogen unten + zwei Endstücke).
+// Auflegen („phone-off“). r ≈ halbe Breite.
 draw_hangup :: proc(cx, cy, r, thick: f32, color: rl.Color) {
-	rl.DrawRing({cx, cy - r*0.55}, r - thick, r, 28, 152, 24, color)
-	rl.DrawCircleV({cx - r*0.86, cy - r*0.55 + r*0.45}, thick*0.72, color)
-	rl.DrawCircleV({cx + r*0.86, cy - r*0.55 + r*0.45}, thick*0.72, color)
+	draw_icon(.Phone_Off, cx, cy, r * 2.4, color, thick)
 }
 
-// Shield outline with a small check inside (admin panel).
+// Schild mit Haken („shield-check“, Admin-Panel). size = Höhe.
 draw_shield :: proc(cx, cy, size, thick: f32, color: rl.Color) {
-	h := size
-	w := size * 0.86
-	top := cy - h*0.5
-	pts := [5]rl.Vector2{
-		{cx - w/2, top},
-		{cx + w/2, top},
-		{cx + w/2, top + h*0.42},
-		{cx, top + h},
-		{cx - w/2, top + h*0.42},
-	}
-	for p, i in pts {
-		q := pts[(i + 1) % len(pts)]
-		rl.DrawLineEx(p, q, thick, color)
-		rl.DrawCircleV(p, thick/2, color)
-	}
-	draw_check(cx, cy - h*0.06, size*0.42, thick, color)
+	draw_icon(.Shield_Check, cx, cy, size * 1.2, color, thick)
 }
 
-// Zahnrad: Ring + acht Zähne (Settings).
+// Zahnrad („settings“). r = Außenradius.
 draw_gear :: proc(cx, cy, r, thick: f32, color: rl.Color) {
-	rl.DrawRing({cx, cy}, r*0.52 - thick, r*0.52, 0, 360, 24, color)
-	for i in 0 ..< 8 {
-		ang := (f32(i)*45 + 22.5) * math.PI / 180
-		dx := math.cos(ang)
-		dy := math.sin(ang)
-		rl.DrawLineEx(
-			{cx + dx*r*0.52, cy + dy*r*0.52},
-			{cx + dx*r, cy + dy*r},
-			thick + 0.8, color,
-		)
-	}
+	draw_icon(.Settings, cx, cy, r * 2.5, color, thick)
 }
 
-// „Ausgliedern“: Rahmen + Pfeil aus der Ecke nach oben rechts.
+// Ausgliedern („external-link“, Call-Popout).
 draw_popout_icon :: proc(cx, cy, size, thick: f32, color: rl.Color) {
-	h := size / 2
-	frame := rl.Rectangle{cx - h, cy - h + size*0.3, size*0.7, size*0.7}
-	rrect_lines(frame, 2, thick, color)
-	ax := cx + h * 0.15
-	ay := cy - h + size*0.15
-	rl.DrawLineEx({ax - size*0.28, ay + size*0.28}, {ax + size*0.1, ay - size*0.1}, thick, color)
-	rl.DrawLineEx({ax - size*0.18, ay - size*0.12}, {ax + size*0.12, ay - size*0.12}, thick, color)
-	rl.DrawLineEx({ax + size*0.12, ay - size*0.12}, {ax + size*0.12, ay + size*0.18}, thick, color)
+	draw_icon(.External_Link, cx, cy, size * 1.33, color, thick)
 }
 
-// Copy-Icon: zwei versetzte Blätter. Das vordere wird in `bg` gefüllt,
-// damit das hintere sauber dahinter verschwindet — `bg` muss also die
-// tatsächliche Fläche unter dem Icon sein.
+// Kopieren („copy“). bg wird nicht mehr gebraucht (Stroke-Icon).
 draw_copy_icon :: proc(cx, cy, size, thick: f32, color, bg: rl.Color) {
-	s := size * 0.62
-	rad := size * 0.16
-	back := rl.Rectangle{cx - s*0.28, cy - s*0.72, s, s}
-	front := rl.Rectangle{cx - s*0.72, cy - s*0.28, s, s}
-	rrect_lines(back, rad, thick, color)
-	rrect(front, rad, bg)
-	rrect_lines(front, rad, thick, color)
+	_ = bg
+	draw_icon(.Copy, cx, cy, size * 1.05, color, thick)
 }
 
-// Sonne: Scheibe + acht Strahlen. `turn` dreht sie (Theme-Übergang).
+// Sonne („sun“). turn dreht sie (Theme-Übergang).
 draw_sun :: proc(cx, cy, r, turn: f32, color: rl.Color) {
-	rl.DrawCircleV({cx, cy}, r*0.56, color)
-	thick := max(f32(1.4), r*0.19)
-	for i in 0 ..< 8 {
-		ang := math.to_radians(f32(i)*45 + turn)
-		dx := math.cos(ang)
-		dy := math.sin(ang)
-		rl.DrawLineEx(
-			{cx + dx*r*0.88, cy + dy*r*0.88},
-			{cx + dx*r*1.3, cy + dy*r*1.3},
-			thick, color,
-		)
-	}
+	draw_icon(.Sun, cx, cy, r * 3.1, color, max(f32(1.4), r*0.19), turn)
 }
 
-// Mond: Scheibe, aus der eine zweite in Hintergrundfarbe ausgestanzt wird
-// — `bg` muss also exakt die Fläche unter dem Icon sein.
+// Mond („moon“). turn wie bei der Sonne; bg wird nicht mehr gebraucht.
 draw_moon :: proc(cx, cy, r, turn: f32, color, bg: rl.Color) {
-	rl.DrawCircleV({cx, cy}, r, color)
-	ang := math.to_radians(f32(-38) + turn)
-	rl.DrawCircleV({cx + math.cos(ang)*r*0.62, cy + math.sin(ang)*r*0.62}, r*0.86, bg)
+	_ = bg
+	draw_icon(.Moon, cx, cy, r * 2.7, color, max(f32(1.4), r*0.19), turn)
 }
 
 runes_str :: proc(runes: []rune) -> string {

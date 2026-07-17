@@ -144,7 +144,7 @@ draw_chat_empty_state :: proc(app: ^App, chat: rl.Rectangle) {
 	// COL_BORDER_SOFT statt COL_PANEL_BG: im dunklen Theme ist der Panel-Ton
 	// mit der Chatfläche identisch, der Kreis wäre unsichtbar.
 	rl.DrawCircleV({cx, cy - 60}, 36, COL_BORDER_SOFT)
-	draw_rune_centered(app.fonts.bold24, '#', cx, cy - 60, COL_TEXT_FAINT)
+	draw_icon(.Hash, cx, cy - 60, 30, COL_TEXT_FAINT, 2.4)
 	draw_text_centered(app.fonts.bold18, "Kein Kanal ausgewählt", cx, cy - 4, 18, COL_TEXT)
 	draw_text_centered(app.fonts.regular15, "Wähle links einen Kanal oder starte eine Direktnachricht.",
 		cx, cy + 24, 15, COL_TEXT_DIM)
@@ -597,12 +597,11 @@ draw_message_input :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat:
 	if btn_focused {
 		draw_focus_ring(btn, 6)
 	}
-	// Senden-Icon (Dreieck nach rechts; DrawPoly umgeht Winding-Fallen).
-	// +1 px optischer Ausgleich: rechtsweisende Dreiecke wirken sonst linkslastig.
-	// Ohne Text gedeckt (auf COL_SEND_IDLE), mit Text weiß auf dem Akzent —
-	// sonst sähe der leere Button im dunklen Theme aktiv aus.
-	rl.DrawPoly({btn.x + btn.width/2 + 1, btn.y + btn.height/2}, 3, 7, 0,
-		mix(COL_TEXT_FAINT, COL_WHITE, bt))
+	// Senden-Icon (Lucide „send-horizontal“). Ohne Text gedeckt (auf
+	// COL_SEND_IDLE), mit Text weiß auf dem Akzent — sonst sähe der leere
+	// Button im dunklen Theme aktiv aus.
+	draw_icon(.Send_Horizontal, btn.x + btn.width/2, btn.y + btn.height/2, 17,
+		mix(COL_TEXT_FAINT, COL_WHITE, bt), 1.8)
 	if (ui_click(&app.ui, btn, .Base) || (btn_focused && app.ui.tab_activate)) && has_text {
 		submitted = true
 	}

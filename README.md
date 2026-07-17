@@ -195,3 +195,5 @@ Flurfunk ist komplett in [Odin](https://odin-lang.org) geschrieben
 ## Lizenz
 
 [MIT](LICENSE) — © 2026 Max Jeschek
+
+UI-Icons: [Lucide](https://lucide.dev) ([ISC](assets/icons/lucide/LICENSE)).
