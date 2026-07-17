@@ -95,13 +95,15 @@ jobs:
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
           bin/flurfunk-server -version
           bin/flurfunk -version
-      - name: Tests (Audio-DSP, Protokoll-Smoke, Persistenz)
+      - name: Tests (Audio-DSP, Avatar-Pipeline, Protokoll-Smoke, Persistenz)
         run: |
           odin build tests/audio -out:bin/audiotest \
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          odin build tests/avatar -out:bin/avatartest
           odin build tests/smoke -out:bin/smoke
           odin build tests/persist -out:bin/persist
           bin/audiotest
+          bin/avatartest
 
           bin/flurfunk-server -port 7999 -data "$RUNNER_TEMP/data" & srv=$!
           for _ in $(seq 50); do (echo >/dev/tcp/127.0.0.1/7999) 2>/dev/null && break; sleep 0.2; done
@@ -155,12 +157,14 @@ jobs:
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
           bin/flurfunk-server -version
           bin/flurfunk -version
-      - name: Audio-DSP-Test
+      - name: Audio-DSP- und Avatar-Pipeline-Test
         run: |
           odin build tests/audio -out:bin/audiotest \
             -minimum-os-version:12.0 \
             -extra-linker-flags:"-L$HOME/audio-prefix/lib"
+          odin build tests/avatar -out:bin/avatartest -minimum-os-version:12.0
           bin/audiotest
+          bin/avatartest
       - name: App-Bundle bauen
         run: packaging/macos/make_app.sh bin/flurfunk "${GITHUB_REF_NAME#v}" out
       - name: Signieren (Developer ID, sonst ad-hoc)

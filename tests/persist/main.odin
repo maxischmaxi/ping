@@ -4,6 +4,7 @@ package persist
 // Datenbestand aus dem Smoke-Test (alice/general/DM müssen existieren).
 // Nutzung: persist <host:port>
 
+import "core:encoding/base64"
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -149,6 +150,38 @@ main :: proc() {
 		fail("tabs nach neustart", "text nicht byte-genau erhalten")
 	}
 	fmt.println("ok: tabs in code-blöcken nach neustart byte-genau")
+
+	// Profilbild überlebt den Neustart: Version aus users.json, Datei
+	// entschlüsselbar, Inhalt byte-genau (Smoke-Test setzte zuletzt v3).
+	if lg.user.avatar != 3 {
+		fail("avatar-version nach neustart", "avatar =", lg.user.avatar)
+	}
+	av := request(&conn, &seq, {kind = shared.K_AVATAR_GET, user_id = lg.user.id})
+	if !av.ok {
+		fail("avatar_get nach neustart", av.err)
+	}
+	{
+		// identisch zum fake_png(256, 256, 64) aus dem Smoke-Test
+		buf := make([dynamic]byte)
+		sig := [8]byte{137, 'P', 'N', 'G', 13, 10, 26, 10}
+		append(&buf, ..sig[:])
+		be32 :: proc(buf: ^[dynamic]byte, v: int) {
+			append(buf, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v))
+		}
+		be32(&buf, 13)
+		append(&buf, 'I', 'H', 'D', 'R')
+		be32(&buf, 256)
+		be32(&buf, 256)
+		append(&buf, 8, 6, 0, 0, 0)
+		append(&buf, 0xAA, 0xBB, 0xCC, 0xDD)
+		for i in 0 ..< 64 {
+			append(&buf, byte(i))
+		}
+		if av.data != base64.encode(buf[:], base64.ENC_TABLE) {
+			fail("avatar-inhalt nach neustart", "bytes stimmen nicht")
+		}
+	}
+	fmt.println("ok: profilbild nach neustart erhalten und entschlüsselbar")
 
 	s := request(&conn, &seq, {kind = shared.K_SEND, channel_id = 1, text = "nach dem neustart"})
 	if !s.ok {

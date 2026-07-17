@@ -159,7 +159,8 @@ draw_chat_header :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat: r
 		partner := dm_partner(c, cs)
 		seed := partner != nil ? partner.username : "?"
 		online := partner != nil && partner.online
-		draw_avatar(app, seed, x, chat.y + (HEADER_H - 28)/2, 28, presence = true, online = online)
+		draw_avatar(app, seed, x, chat.y + (HEADER_H - 28)/2, 28, presence = true, online = online,
+			c = c, uid = partner != nil ? partner.id : 0)
 		title := channel_title(c, cs)
 		draw_text(app.fonts.bold18, tcstr(title), {x + 38, chat.y + (HEADER_H - 18)/2}, 18, 0, COL_TEXT)
 		if partner != nil && partner.in_call {
@@ -173,51 +174,60 @@ draw_chat_header :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat: r
 		title := channel_title(c, cs)
 		draw_text(app.fonts.bold18, tcstr(title), {x, chat.y + (HEADER_H - 18)/2}, 18, 0, COL_TEXT)
 
-		// Mitglieder-Avatare (gestapelt) + Zähler → öffnet Mitglieder-Modal
+		// Mitglieder-Pill: gestapelte Avatare + Zähler → öffnet Mitglieder-Modal.
+		// Der letzte Avatar bekommt KEINEN Overlap-Abzug — der Zähler braucht
+		// echten Abstand zur Avatar-Kante.
 		n := len(cs.ch.member_ids)
 		shown := min(n, 3)
-		aw := f32(26)
-		overlap := f32(8)
+		aw := f32(24)
+		overlap := f32(7)
 		stack_w := f32(shown)*aw - f32(max(0, shown-1))*overlap
 		count_label := fmt.tprintf("%d", n)
 		clw := rl.MeasureTextEx(app.fonts.bold13, tcstr(count_label), 13, 0).x
-		total_w := stack_w + clw + 18
+		pad := f32(7)
+		gap := f32(9) // Luft zwischen Avatar-Stack und Zähler
+		ph := f32(32)
+		total_w := pad + stack_w + gap + clw + pad + 3
 		// Rechts sitzen Theme-Umschalter + Latenz-Indikator → Platz freihalten
 		r := rl.Rectangle{
 			chat.x + chat.width - total_w - 24 - THEME_RESERVE - PING_RESERVE,
-			chat.y + (HEADER_H - 34)/2, total_w + 12, 34,
+			chat.y + (HEADER_H - ph)/2, total_w, ph,
 		}
 
 		hovered := ui_hover(&app.ui, r, .Base)
-		focused := tab_stop(app, anim_id(.Misc, cs.ch.id ~ 0xABCD), r, .Base, radius = 7)
+		focused := tab_stop(app, anim_id(.Misc, cs.ch.id ~ 0xABCD), r, .Base, radius = ph/2)
 		t := anim_to(app, anim_id(.Misc, cs.ch.id ~ 0xABCD), (hovered || focused) ? 1 : 0)
-		rrect(r, 7, fade(COL_OVERLAY, t*0.06))
+		pill_bg := mix(COL_CHAT_BG, COL_SURFACE_HOVER, 0.35 + t*0.65)
+		rrect(r, ph/2, pill_bg)
+		rrect_lines(r, ph/2, 1, mix(COL_BORDER_SOFT, COL_BORDER, t))
 		if focused {
-			draw_focus_ring(r, 7)
+			draw_focus_ring(r, ph/2)
 		}
 		if hovered {
 			app.ui.cursor = .POINTING_HAND
 		}
-		ax := r.x + 6
+		cy := r.y + ph/2
+		ax := r.x + pad
 		for i in 0 ..< shown {
 			mid := cs.ch.member_ids[i]
 			seed := fmt.tprintf("%d", mid)
 			if u := conn_find_user(c, mid); u != nil {
 				seed = u.username
 			}
-			// weißer Ring, damit sich die gestapelten Avatare abheben
-			rl.DrawCircleV({ax + aw/2, r.y + 17}, aw/2 + 2, COL_CHAT_BG)
-			draw_avatar(app, seed, ax, r.y + 17 - aw/2, aw)
+			// Ring in Pill-Farbe, damit sich die gestapelten Avatare abheben
+			rl.DrawCircleV({ax + aw/2, cy}, aw/2 + 2, pill_bg)
+			draw_avatar(app, seed, ax, cy - aw/2, aw, c = c, uid = mid)
 			ax += aw - overlap
 		}
-		draw_text(app.fonts.bold13, tcstr(count_label), {ax + 8, r.y + (34-13)/2}, 13, 0, COL_TEXT_DIM)
+		draw_text(app.fonts.bold13, tcstr(count_label),
+			{r.x + pad + stack_w + gap, cy - 13/2 - 1}, 13, 0, mix(COL_TEXT_DIM, COL_TEXT, t))
 		tooltip(app, anim_id(.Misc, cs.ch.id ~ 0xEF01), r, "Mitglieder anzeigen & einladen", .Base)
 		if ui_click(&app.ui, r, .Base) || (focused && app.ui.tab_activate) {
 			open_modal(app, .Members)
 		}
 
-		// Voice-Call-Button links vom Mitglieder-Stack
-		cb := rl.Rectangle{r.x - 42, chat.y + (HEADER_H - 34)/2, 34, 34}
+		// Voice-Call-Button links von der Mitglieder-Pill
+		cb := rl.Rectangle{r.x - 44, chat.y + (HEADER_H - 34)/2, 34, 34}
 		draw_call_header_button(app, c, cs, cb)
 	}
 	rl.DrawLineEx({chat.x, chat.y + HEADER_H}, {chat.x + chat.width, chat.y + HEADER_H}, 1, COL_BORDER_SOFT)
@@ -382,7 +392,7 @@ draw_message_list :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, list: 
 					seed = u.username
 				}
 				av := rl.Rectangle{list.x + 24, y + 8, 36, 36}
-				draw_avatar(app, seed, av.x, av.y, 36)
+				draw_avatar(app, seed, av.x, av.y, 36, c = c, uid = author_id)
 
 				name_w := rl.MeasureTextEx(app.fonts.bold15, tcstr(author), 15, 0).x
 				name_r := rl.Rectangle{text_x, y + 8, name_w, 18}

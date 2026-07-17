@@ -1057,17 +1057,29 @@ to_upper_rune :: proc(r: rune) -> rune {
 	return r
 }
 
-// Avatar-Kreis mit Initiale; optional Presence-Punkt unten rechts.
-draw_avatar :: proc(app: ^App, name: string, x, y, size: f32, presence := false, online := false) {
-	col := hash_color(name)
+// Avatar-Kreis: Profilbild (falls vorhanden und c/uid übergeben), sonst
+// Initiale auf Hash-Farbe; optional Presence-Punkt unten rechts.
+draw_avatar :: proc(app: ^App, name: string, x, y, size: f32, presence := false, online := false, c: ^Server_Conn = nil, uid: u64 = 0) {
 	cx := x + size/2
 	cy := y + size/2
-	rl.DrawCircleV({cx, cy}, size/2, col)
-	ini := initials(name)
-	font := size >= 30 ? app.fonts.bold15 : app.fonts.bold11
-	fsize := size >= 30 ? f32(15) : f32(11)
-	tw := rl.MeasureTextEx(font, tcstr(ini), fsize, 0)
-	draw_text(font, tcstr(ini), {x + (size - tw.x)/2, y + (size - tw.y)/2}, fsize, 0, COL_WHITE)
+	drew_image := false
+	if c != nil && uid != 0 {
+		if tex, ok := avatar_texture(app, c, uid); ok {
+			src := rl.Rectangle{0, 0, f32(tex.width), f32(tex.height)}
+			rl.DrawTexturePro(tex, src, {x, y, size, size}, {0, 0}, 0, rl.WHITE)
+			// Hairline, damit sich helle Fotos vom Hintergrund abheben
+			rl.DrawRing({cx, cy}, size/2 - 1, size/2, 0, 360, 36, fade(COL_OVERLAY, 0.10))
+			drew_image = true
+		}
+	}
+	if !drew_image {
+		rl.DrawCircleV({cx, cy}, size/2, hash_color(name))
+		ini := initials(name)
+		font := size >= 30 ? app.fonts.bold15 : app.fonts.bold11
+		fsize := size >= 30 ? f32(15) : f32(11)
+		tw := rl.MeasureTextEx(font, tcstr(ini), fsize, 0)
+		draw_text(font, tcstr(ini), {x + (size - tw.x)/2, y + (size - tw.y)/2}, fsize, 0, COL_WHITE)
+	}
 	if presence {
 		px := x + size - size*0.12
 		py := y + size - size*0.12

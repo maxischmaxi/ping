@@ -299,6 +299,18 @@ card_frame :: proc(app: ^App, chat: rl.Rectangle, w, h: f32) -> rl.Rectangle {
 	return p
 }
 
+// Kleiner Hinweistext unter einem Formularfeld (erklärt Zweck + Sichtbarkeit).
+@(private = "file")
+field_hint :: proc(app: ^App, x, y, w: f32, text: string) {
+	draw_text(app.fonts.regular13, tcstr(trim_label(app, app.fonts.regular13, 13, text, w)),
+		{x, y}, 13, 0, COL_TEXT_FAINT)
+}
+
+// Feldblock-Höhen: Label + Feld (+ Hinweis) + Luft.
+AUTH_FIELD_H :: f32(74)        // ohne Hinweiszeile
+AUTH_FIELD_HINT_H :: f32(90)   // mit Hinweiszeile
+AUTH_AVATAR_H :: f32(80)
+
 @(private = "file")
 draw_auth :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 	fresh := !c.initialized // frischer Server → nur Registrieren, erster User wird Admin
@@ -306,15 +318,22 @@ draw_auth :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 	need_invite := register && !fresh && c.invite_only
 	provs := c.providers
 
-	h := f32(register ? 424 : 372)
-	if fresh {
-		h = 434
+	// Höhe aus denselben Blöcken zusammensetzen, die unten gezeichnet werden
+	h := f32(28) // oberes Polster
+	h += fresh ? 68 : 58
+	if register {
+		h += AUTH_FIELD_HINT_H * 2 // Nutzername + Anzeigename (mit Hinweis)
+		if need_invite {
+			h += AUTH_FIELD_HINT_H
+		}
+		h += AUTH_FIELD_H // Passwort
+		h += AUTH_AVATAR_H
+	} else {
+		h += AUTH_FIELD_H * 2 // Nutzername + Passwort
 	}
-	if need_invite {
-		h += 72
-	}
+	h += 52 + 20 + 14 // Button + Fehlerzeile + unteres Polster
 	if len(provs) > 0 {
-		h += 26 + f32(len(provs)) * 48
+		h += 46 + f32(len(provs)) * 48 // Trenner „oder weiter mit" + Provider-Buttons
 	}
 	p := card_frame(app, chat, 420, h)
 
@@ -374,14 +393,23 @@ draw_auth :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 
 	draw_text(app.fonts.regular13, "Nutzername", {field_x, y}, 13, 0, COL_TEXT_DIM)
 	y += 20
-	submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_user, .Auth_User, .Base, "vorname.nachname")
-	y += 52
+	submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_user, .Auth_User, .Base,
+		register ? "z. B. max.mustermann" : "dein.nutzername")
+	y += 46
+	if register {
+		field_hint(app, field_x, y, field_w, "Dein fester Anmeldename — für alle auf dem Server sichtbar.")
+		y += AUTH_FIELD_HINT_H - 66
+	} else {
+		y += AUTH_FIELD_H - 66
+	}
 
 	if register {
-		draw_text(app.fonts.regular13, "Anzeigename", {field_x, y}, 13, 0, COL_TEXT_DIM)
+		draw_text(app.fonts.regular13, "Anzeigename (optional)", {field_x, y}, 13, 0, COL_TEXT_DIM)
 		y += 20
-		submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_display, .Auth_Display, .Base, "Vorname Nachname")
-		y += 52
+		submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_display, .Auth_Display, .Base, "z. B. Max Mustermann")
+		y += 46
+		field_hint(app, field_x, y, field_w, "So heißt du im Chat — für alle sichtbar. Leer = Nutzername.")
+		y += AUTH_FIELD_HINT_H - 66
 	}
 
 	if need_invite {
@@ -389,15 +417,17 @@ draw_auth :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 		draw_text(app.fonts.regular13, "Einladungscode", {field_x, y}, 13, 0, COL_TEXT_DIM)
 		y += 20
 		submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_invite, .Auth_Invite, .Base, "z. B. K7RTQW2M")
-		y += 52
+		y += 46
+		field_hint(app, field_x, y, field_w, "Bekommst du von der Person, die dich einlädt. Gilt einmal.")
+		y += AUTH_FIELD_HINT_H - 66
 	}
 
 	draw_text(app.fonts.regular13, "Passwort", {field_x, y}, 13, 0, COL_TEXT_DIM)
 	label_y := y
 	y += 20
 	submitted |= text_field(app, {field_x, y, field_w, 40}, &c.auth_pass, .Auth_Pass, .Base,
-		register ? "mindestens 6 Zeichen" : "Passwort", password = !c.show_pass)
-	y += 54
+		register ? "mindestens 6 Zeichen" : "Dein Passwort", password = !c.show_pass)
+	y += AUTH_FIELD_H - 20
 
 	// Show/hide toggle — registered AFTER the field so Tab reaches the
 	// password field first and the link second.
@@ -414,6 +444,11 @@ draw_auth :: proc(app: ^App, c: ^Server_Conn, chat: rl.Rectangle) {
 	}
 	if ui_click(&app.ui, tr, .Base) || (toggle_focused && app.ui.tab_activate) {
 		c.show_pass = !c.show_pass
+	}
+
+	if register {
+		// Optionales Profilbild — wird nach erfolgreicher Registrierung hochgeladen
+		y += draw_auth_avatar_row(app, c, field_x, y, field_w)
 	}
 
 	btn_label := register ? (fresh ? "Server einrichten" : "Konto erstellen") : "Anmelden"
@@ -601,6 +636,15 @@ app_remove_server :: proc(app: ^App, idx: int) {
 
 	// Reader-Thread (falls noch aktiv) über Generation invalidieren
 	conn_invalidate(c)
+
+	// GPU-Ressourcen dieser Verbindung freigeben
+	avatar_cache_clear(c)
+	if c.auth_av_ok {
+		rl.UnloadTexture(c.auth_av_tex)
+		c.auth_av_ok = false
+	}
+	delete(c.auth_avatar_png)
+	delete(c.av_upload_png)
 
 	if c.cfg_index >= 0 && c.cfg_index < len(app.cfg.servers) {
 		ordered_remove(&app.cfg.servers, c.cfg_index)

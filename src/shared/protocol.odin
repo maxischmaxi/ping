@@ -55,6 +55,15 @@ K_PING :: "ping"
 K_OAUTH_START  :: "oauth_start"  // provider + redirect_port → auth_url + state
 K_OAUTH_FINISH :: "oauth_finish" // state + code → session (like login)
 
+// Profilbilder. Der Client schneidet das Bild lokal zu (Kreis-Ausschnitt,
+// AVATAR_BAKE_DIM²) und lädt es als PNG (base64 in `data`) hoch. Der Server
+// prüft nur Magic/IHDR/Limits, dekodiert aber nicht. User.avatar trägt eine
+// Versionsnummer (0 = kein Bild) — ändert sie sich, holt der Client das
+// Bild per avatar_get neu.
+K_AVATAR_SET    :: "avatar_set"    // data = base64(PNG)
+K_AVATAR_DELETE :: "avatar_delete"
+K_AVATAR_GET    :: "avatar_get"    // user_id → data + user
+
 // Admin panel. All of these require an admin caller; every successful reply
 // carries a fresh Admin_State snapshot so the client never has to sync
 // increments. Server settings changes go through admin_set as a whole.
@@ -88,6 +97,13 @@ EDIT_WINDOW_MS       :: 60 * 1000
 MAX_MESSAGE_EDITS    :: 3
 INVITE_CODE_LEN      :: 8
 
+// Profilbild-Limits. Der Client backt auf AVATAR_BAKE_DIM² herunter; der
+// Server akzeptiert quadratische PNGs im Bereich MIN..MAX (andere Clients).
+AVATAR_BAKE_DIM  :: 256
+AVATAR_MIN_DIM   :: 64
+AVATAR_MAX_DIM   :: 512
+AVATAR_MAX_BYTES :: 400 * 1024
+
 User :: struct {
 	id:           u64    `json:"id"`,
 	username:     string `json:"username"`,
@@ -96,6 +112,7 @@ User :: struct {
 	disabled:     bool   `json:"disabled,omitempty"`, // account disabled by an admin
 	online:       bool   `json:"online,omitempty"`,
 	in_call:      bool   `json:"in_call,omitempty"`, // Headphone-Anzeige
+	avatar:       u64    `json:"avatar,omitempty"`,  // Profilbild-Version (0 = keins)
 }
 
 // Server settings the admin can change (absolute values, sent as a whole).
@@ -253,6 +270,7 @@ Wire :: struct {
 	text:       string `json:"text,omitempty"`,
 	before_id:  u64    `json:"before_id,omitempty"`,
 	limit:      int    `json:"limit,omitempty"`,
+	data:       string `json:"data,omitempty"`, // base64-Binärpayload (Profilbild)
 
 	// Admin / Zugang
 	invite_code: string                `json:"invite_code,omitempty"`, // register + invite management
@@ -282,6 +300,28 @@ wire_ok :: proc(kind: string, seq: u64) -> Wire {
 
 wire_err :: proc(kind: string, seq: u64, msg: string) -> Wire {
 	return Wire{kind = kind, seq = seq, err = msg}
+}
+
+// PNG-Maße aus dem IHDR-Chunk lesen (liegt laut Spec immer direkt nach der
+// 8-Byte-Signatur). ok=false wenn das kein PNG ist. Server (Upload-Limits)
+// und Client (Format-Sniffing) prüfen damit, ohne zu dekodieren.
+png_dims :: proc(data: []byte) -> (w, h: int, ok: bool) {
+	magic := [8]byte{137, 'P', 'N', 'G', 13, 10, 26, 10}
+	if len(data) < 24 {
+		return
+	}
+	for b, i in magic {
+		if data[i] != b {
+			return
+		}
+	}
+	if string(data[12:16]) != "IHDR" {
+		return
+	}
+	be32 :: proc(b: []byte) -> int {
+		return int(b[0]) << 24 | int(b[1]) << 16 | int(b[2]) << 8 | int(b[3])
+	}
+	return be32(data[16:20]), be32(data[20:24]), true
 }
 
 valid_username :: proc(s: string) -> bool {

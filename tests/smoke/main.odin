@@ -5,6 +5,7 @@ package smoke
 // Bei Hängern von außen mit `timeout` begrenzen.
 
 import "core:bytes"
+import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:net"
@@ -138,6 +139,50 @@ udp_expect :: proc(sock: net.UDP_Socket, key: []byte, step: string) -> (vp: shar
 	vp.sealed = nil
 	step_ok(step)
 	return
+}
+
+// Minimales "PNG": Signatur + IHDR + Füllbytes. Der Server prüft Magic,
+// Maße und Limits, dekodiert aber nicht — dafür reicht das.
+fake_png :: proc(w, h: int, extra: int) -> []byte {
+	buf := make([dynamic]byte)
+	sig := [8]byte{137, 'P', 'N', 'G', 13, 10, 26, 10}
+	append(&buf, ..sig[:])
+	be32 :: proc(buf: ^[dynamic]byte, v: int) {
+		append(buf, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v))
+	}
+	be32(&buf, 13) // IHDR-Länge
+	append(&buf, 'I', 'H', 'D', 'R')
+	be32(&buf, w)
+	be32(&buf, h)
+	append(&buf, 8, 6, 0, 0, 0)          // bitdepth, colortype RGBA, comp/filter/interlace
+	append(&buf, 0xAA, 0xBB, 0xCC, 0xDD) // Pseudo-CRC
+	for i in 0 ..< extra {
+		append(&buf, byte(i))
+	}
+	return buf[:]
+}
+
+// EV_USER eines bestimmten Users mit bestimmter Avatar-Version abwarten
+// (Presence-Events anderer User werden übersprungen/gepuffert).
+expect_avatar_event :: proc(tc: ^Test_Conn, uid: u64, avatar: u64, step: string) {
+	for w, i in tc.pending {
+		if w.kind == shared.EV_USER && w.user.id == uid && w.user.avatar == avatar {
+			ordered_remove(&tc.pending, i)
+			step_ok(step)
+			return
+		}
+	}
+	for {
+		r, ok := shared.recv_wire(&tc.secure)
+		if !ok {
+			fail(step, tc.label, "Verbindung zu beim Warten auf Avatar-Event")
+		}
+		if r.kind == shared.EV_USER && r.user.id == uid && r.user.avatar == avatar {
+			step_ok(step)
+			return
+		}
+		append(&tc.pending, r)
+	}
 }
 
 // Sucht ein Event in Puffer/Stream.
@@ -586,7 +631,83 @@ main :: proc() {
 	}
 	step_ok("call sauber beendet")
 
-	// 10) Admin-Panel: Rechte, Einstellungen, Einladungen, Konten
+	// 10) Profilbilder: Limits, Versionierung, Events, Roundtrip, Löschen
+	{
+		// Alte Presence-Events aus Bobs Puffer werfen — gleich wird gezielt
+		// auf Avatar-Versionen gematcht (avatar=0 käme sonst falsch positiv).
+		for i := len(b.pending) - 1; i >= 0; i -= 1 {
+			if b.pending[i].kind == shared.EV_USER {
+				ordered_remove(&b.pending, i)
+			}
+		}
+
+		png1 := fake_png(256, 256, 64)
+		b64_1 := base64.encode(png1, base64.ENC_TABLE)
+		sa := must(a, {kind = shared.K_AVATAR_SET, data = b64_1}, "avatar setzen")
+		if sa.user.avatar != 1 || sa.user.id != alice_id {
+			fail("avatar-version", "avatar =", sa.user.avatar)
+		}
+		expect_avatar_event(b, alice_id, 1, "bob sieht avatar-event v1")
+
+		gb := must(b, {kind = shared.K_AVATAR_GET, user_id = alice_id}, "avatar abrufen")
+		if gb.data != b64_1 || gb.user.avatar != 1 {
+			fail("avatar-roundtrip", "bytes/version stimmen nicht")
+		}
+		lu := must(b, {kind = shared.K_LIST_USERS}, "list_users mit avatar")
+		found := false
+		for u in lu.users {
+			if u.id == alice_id {
+				found = u.avatar == 1
+			}
+		}
+		if !found {
+			fail("avatar in list_users", "version fehlt")
+		}
+		step_ok("avatar-version in list_users")
+
+		// Limits: leer, kein PNG, nicht quadratisch, zu klein, zu groß, zu fett
+		must_err(a, {kind = shared.K_AVATAR_SET, data = ""}, "invalid_request", "leerer upload abgelehnt")
+		garbage := base64.encode(transmute([]byte)string("definitiv kein png, nur text"), base64.ENC_TABLE)
+		must_err(a, {kind = shared.K_AVATAR_SET, data = garbage}, "invalid_request", "nicht-png abgelehnt")
+		must_err(a, {kind = shared.K_AVATAR_SET, data = base64.encode(fake_png(200, 100, 16), base64.ENC_TABLE)},
+			"invalid_request", "nicht-quadratisch abgelehnt")
+		must_err(a, {kind = shared.K_AVATAR_SET, data = base64.encode(fake_png(32, 32, 16), base64.ENC_TABLE)},
+			"invalid_request", "zu kleines bild abgelehnt")
+		must_err(a, {kind = shared.K_AVATAR_SET, data = base64.encode(fake_png(600, 600, 16), base64.ENC_TABLE)},
+			"invalid_request", "zu große maße abgelehnt")
+		must_err(a, {kind = shared.K_AVATAR_SET, data = base64.encode(fake_png(256, 256, shared.AVATAR_MAX_BYTES), base64.ENC_TABLE)},
+			"invalid_request", "zu große datei abgelehnt")
+		must_err(b, {kind = shared.K_AVATAR_GET, user_id = 99999}, "not_found", "avatar unbekannter user")
+
+		// Zweiter Upload bumpt die Version
+		png2 := fake_png(128, 128, 32)
+		b64_2 := base64.encode(png2, base64.ENC_TABLE)
+		sa2 := must(a, {kind = shared.K_AVATAR_SET, data = b64_2}, "avatar ersetzen")
+		if sa2.user.avatar != 2 {
+			fail("avatar-version 2", "avatar =", sa2.user.avatar)
+		}
+		expect_avatar_event(b, alice_id, 2, "bob sieht avatar-event v2")
+		gb2 := must(b, {kind = shared.K_AVATAR_GET, user_id = alice_id}, "neuen avatar abrufen")
+		if gb2.data != b64_2 {
+			fail("avatar-roundtrip v2", "bytes stimmen nicht")
+		}
+
+		// Löschen: Version 0, Datei weg, Event an alle
+		dl := must(a, {kind = shared.K_AVATAR_DELETE}, "avatar löschen")
+		if dl.user.avatar != 0 {
+			fail("avatar nach löschen", "avatar =", dl.user.avatar)
+		}
+		expect_avatar_event(b, alice_id, 0, "bob sieht avatar-löschung")
+		must_err(b, {kind = shared.K_AVATAR_GET, user_id = alice_id}, "not_found", "gelöschter avatar weg")
+
+		// Für den Persist-Test wieder setzen (Version 3, Inhalt png1)
+		sa3 := must(a, {kind = shared.K_AVATAR_SET, data = b64_1}, "avatar für persist-test setzen")
+		if sa3.user.avatar != 3 {
+			fail("avatar-version 3", "avatar =", sa3.user.avatar)
+		}
+	}
+
+	// 11) Admin-Panel: Rechte, Einstellungen, Einladungen, Konten
 	must_err(b, {kind = shared.K_ADMIN_STATE}, "not_allowed", "admin-gate für normale user")
 	ast := must(a, {kind = shared.K_ADMIN_STATE}, "admin_state")
 	if ast.admin.settings.f2b_max_fails != 5 || ast.admin.settings.f2b_window_min != 15 ||
@@ -692,7 +813,7 @@ main :: proc() {
 		"invalid_credentials", "altes passwort tot")
 	must(f2, {kind = shared.K_LOGIN, username = "carol", password = "neu12345"}, "neues passwort gilt")
 
-	// 11) OAuth-Login gegen einen Fake-OIDC-Provider
+	// 12) OAuth-Login gegen einen Fake-OIDC-Provider
 	fake_oidc_start()
 
 	// Aktivieren ohne Konfiguration scheitert; normale User dürfen gar nicht
@@ -790,7 +911,7 @@ main :: proc() {
 	// Zähler der Test-IP leeren (die fail2ban-Sektion braucht einen sauberen Stand)
 	must(connect(addr, "O6"), {kind = shared.K_RESUME, token = mia_token}, "resume räumt fail-zähler")
 
-	// 12) IP-Bans + fail2ban (zum Schluss — sperrt zeitweise die Test-IP)
+	// 13) IP-Bans + fail2ban (zum Schluss — sperrt zeitweise die Test-IP)
 	must_err(a, {kind = shared.K_ADMIN_BAN_IP, ip = "127.0.0.1"}, "own_ip", "eigene ip nicht sperrbar")
 	must_err(a, {kind = shared.K_ADMIN_BAN_IP, ip = "kein-ip"}, "invalid_request", "kaputte ip abgelehnt")
 	bn := must(a, {kind = shared.K_ADMIN_BAN_IP, ip = "203.0.113.7", minutes = 30}, "fremde ip sperren")

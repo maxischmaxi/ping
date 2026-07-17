@@ -19,6 +19,10 @@ STATIC_KEY_SIZE :: 32
 // größer sein. Jeder Chunk: 1 Flag-Byte (1 = letzter) + Payload, versiegelt.
 CHUNK_MAX :: 32 * 1024
 
+// Obergrenze einer zusammengesetzten Nachricht — schützt beide Seiten vor
+// endlosen Chunk-Strömen (größte legitime Nachricht: Avatar-Upload).
+MESSAGE_MAX :: 4 * 1024 * 1024
+
 Secure_Conn :: struct {
 	sock:        net.TCP_Socket,
 	cs:          noise.Cipher_States,
@@ -171,6 +175,10 @@ secure_recv :: proc(conn: ^Secure_Conn, allocator := context.allocator) -> ([]by
 		}
 		plain, st := noise.open_message(&conn.cs, nil, frame, pt[:len(frame)-noise.TAG_SIZE])
 		if st != .Ok {
+			delete(out)
+			return nil, false
+		}
+		if len(out) + len(plain) - 1 > MESSAGE_MAX {
 			delete(out)
 			return nil, false
 		}

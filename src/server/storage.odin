@@ -27,6 +27,8 @@ User_Rec :: struct {
 	disabled:     bool   `json:"disabled,omitempty"`,
 	last_ip:      string `json:"last_ip,omitempty"`,
 	last_seen_ms: i64    `json:"last_seen_ms,omitempty"`,
+	avatar_ver:   u64    `json:"avatar_ver,omitempty"`,
+	avatar_max:   u64    `json:"avatar_max,omitempty"`,
 	salt:         string `json:"salt"`,      // base64
 	pass_hash:    string `json:"pass_hash"`, // base64
 
@@ -112,6 +114,10 @@ messages_path :: proc(channel_id: u64) -> string {
 	return fmt.tprintf("%s/messages/%d.bin", g.data_dir, channel_id)
 }
 
+avatar_path :: proc(user_id: u64) -> string {
+	return fmt.tprintf("%s/avatars/%d.bin", g.data_dir, user_id)
+}
+
 // Message-Log eines gelöschten Channels entfernen (Fehler egal —
 // Channels ohne Nachrichten haben nie eine Datei bekommen).
 delete_message_log :: proc(channel_id: u64) {
@@ -183,6 +189,8 @@ save_users :: proc() {
 			disabled       = u.disabled,
 			last_ip        = u.last_ip,
 			last_seen_ms   = u.last_seen_ms,
+			avatar_ver     = u.avatar_ver,
+			avatar_max     = u.avatar_max,
 			salt           = base64.encode(u.salt[:], base64.ENC_TABLE, context.temp_allocator),
 			pass_hash      = base64.encode(u.pass_hash[:], base64.ENC_TABLE, context.temp_allocator),
 			oauth_provider = u.oauth_provider,
@@ -304,6 +312,8 @@ load_state :: proc() -> bool {
 				disabled       = r.disabled,
 				last_ip        = strings.clone(r.last_ip),
 				last_seen_ms   = r.last_seen_ms,
+				avatar_ver     = r.avatar_ver,
+				avatar_max     = max(r.avatar_max, r.avatar_ver),
 				oauth_provider = strings.clone(r.oauth_provider),
 				oauth_sub      = strings.clone(r.oauth_sub),
 			}
@@ -433,6 +443,55 @@ load_state :: proc() -> bool {
 	}
 
 	return true
+}
+
+// ---------- Profilbilder (verschlüsselt at rest) ----------
+
+// Format: nonce(24) || tag(16) || ciphertext, unter dem Master-Key.
+// AAD: "avatar" || 8 Bytes User-ID big-endian — eigene Domäne, damit sich
+// Avatar-Dateien und Message-Logs nicht gegenseitig unterschieben lassen.
+@(private = "file")
+avatar_aad :: proc(user_id: u64) -> [14]byte {
+	aad: [14]byte
+	copy(aad[:], "avatar")
+	id := message_aad(user_id)
+	copy(aad[6:], id[:])
+	return aad
+}
+
+save_avatar :: proc(user_id: u64, png: []byte) -> bool {
+	dir := fmt.tprintf("%s/avatars", g.data_dir)
+	if os.make_directory_all(dir) != nil && !os.exists(dir) {
+		return false
+	}
+	buf := make([]byte, NONCE_LEN + TAG_LEN + len(png), context.temp_allocator)
+	nonce := buf[:NONCE_LEN]
+	tag := buf[NONCE_LEN : NONCE_LEN + TAG_LEN]
+	ct := buf[NONCE_LEN + TAG_LEN:]
+	crypto.rand_bytes(nonce)
+	aad := avatar_aad(user_id)
+	aead.seal_oneshot(.XCHACHA20POLY1305, ct, tag, g.master_key[:], nonce, aad[:], png)
+	return os.write_entire_file(avatar_path(user_id), buf, FILE_PERM) == nil
+}
+
+load_avatar :: proc(user_id: u64) -> (png: []byte, ok: bool) {
+	data, rerr := os.read_entire_file(avatar_path(user_id), context.temp_allocator)
+	if rerr != nil || len(data) < NONCE_LEN + TAG_LEN {
+		return
+	}
+	nonce := data[:NONCE_LEN]
+	tag := data[NONCE_LEN : NONCE_LEN + TAG_LEN]
+	ct := data[NONCE_LEN + TAG_LEN:]
+	png = make([]byte, len(ct), context.temp_allocator)
+	aad := avatar_aad(user_id)
+	if !aead.open_oneshot(.XCHACHA20POLY1305, png, g.master_key[:], nonce, aad[:], ct, tag) {
+		return nil, false
+	}
+	return png, true
+}
+
+delete_avatar_file :: proc(user_id: u64) {
+	_ = os.remove(avatar_path(user_id))
 }
 
 // ---------- Verschlüsselte Message-Logs ----------

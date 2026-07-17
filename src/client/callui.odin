@@ -64,7 +64,7 @@ draw_call_peer :: proc(app: ^App, c: ^Server_Conn, p: shared.Call_Peer, x, y, av
 	if glow > 0.02 {
 		rl.DrawRing({x + av/2, y + av/2}, av/2 + 1.5, av/2 + 3.5, 0, 360, 32, fade(COL_ONLINE, glow))
 	}
-	draw_avatar(app, seed, x, y, av)
+	draw_avatar(app, seed, x, y, av, c = c, uid = p.user_id)
 	if p.muted {
 		br := av * 0.24
 		rl.DrawCircleV({x + av - br + 1, y + av - br + 1}, br + 1.5, COL_SURFACE)
@@ -142,7 +142,7 @@ draw_call_banner :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, chat: r
 	for i in 0 ..< shown {
 		if u := conn_find_user(c, cc.peers[i].user_id); u != nil {
 			rl.DrawCircleV({ax + 11, cy}, 13, fade(COL_ACCENT, 0.10))
-			draw_avatar(app, u.username, ax, cy - 11, 22)
+			draw_avatar(app, u.username, ax, cy - 11, 22, c = c, uid = u.id)
 			ax += 16
 		}
 	}
@@ -215,7 +215,7 @@ draw_call_card :: proc(app: ^App, c: ^Server_Conn, cs: ^Channel_State, m: shared
 				seed = u.username
 			}
 			rl.DrawCircleV({ax + aw/2, icy}, aw/2 + 2, COL_SURFACE)
-			draw_avatar(app, seed, ax, icy - aw/2, aw)
+			draw_avatar(app, seed, ax, icy - aw/2, aw, c = c, uid = p.user_id)
 			ax += aw - overlap
 		}
 		right -= stack_w + 12

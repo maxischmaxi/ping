@@ -14,6 +14,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 
+import rl "vendor:raylib"
 import shared "../shared"
 
 DeviceKey :: ecdh.Private_Key
@@ -106,6 +107,10 @@ Server_Conn :: struct {
 	sidebar_scroll: Scroll,
 	calls:          map[u64]Channel_Call, // laufende Calls (channel_id → Stand)
 
+	// Profilbilder (avatar.odin): Textur-Cache pro User + Upload-Zustände
+	avatars:       map[u64]Avatar_State,
+	av_upload_png: []byte, // gebackenes PNG unterwegs zum Server (heap)
+
 	// Admin panel snapshot; every admin reply replaces it wholesale.
 	admin:         shared.Admin_State,
 	admin_loaded:  bool,
@@ -132,6 +137,12 @@ Server_Conn :: struct {
 	auth_error:    string,
 	auth_busy:     bool,
 	show_pass:     bool,
+
+	// Optionales Profilbild im Registrier-Formular (gebacken, wird nach
+	// erfolgreicher Registrierung hochgeladen)
+	auth_avatar_png: []byte,
+	auth_av_tex:     rl.Texture2D,
+	auth_av_ok:      bool,
 	setup_input:   Text_Input,
 	setup_error:   string,
 	msg_input:     Text_Input,
@@ -178,6 +189,7 @@ conn_start :: proc(c: ^Server_Conn) {
 	clear(&c.users)
 	clear(&c.channels)
 	clear(&c.calls)
+	avatar_cache_clear(c)
 	c.active_channel = 0
 	c.synced = false
 	c.admin_loaded = false

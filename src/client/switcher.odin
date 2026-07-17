@@ -162,7 +162,7 @@ draw_quick_switcher :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 
 		ix := x + 24
 		if it.is_dm {
-			draw_avatar(app, it.seed, ix, ly + (row_h - 30)/2, 30, presence = true, online = it.online)
+			draw_avatar(app, it.seed, ix, ly + (row_h - 30)/2, 30, presence = true, online = it.online, c = c, uid = it.user_id)
 		} else {
 			rl.DrawCircleV({ix + 15, ly + row_h/2}, 15, COL_PANEL_BG)
 			draw_rune_centered(app.fonts.bold15, '#', ix + 15, ly + row_h/2, COL_TEXT_DIM)

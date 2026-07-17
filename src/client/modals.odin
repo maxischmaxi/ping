@@ -12,6 +12,10 @@ open_modal :: proc(app: ^App, kind: Modal_Kind) {
 	if app.modal == .Settings && kind != .Settings {
 		settings_on_close(app) // Wechsel (z. B. Strg+K): Audio-Tests stoppen
 	}
+	if app.modal == .Avatar_Crop && kind != .Avatar_Crop {
+		avatar_crop_cleanup(app) // Wechsel am Editor vorbei: Quelle freigeben
+		app.av_return_settings = false
+	}
 	app.modal = kind
 	app.modal_error = ""
 	ti_clear(&app.modal_input)
@@ -37,10 +41,19 @@ close_modal :: proc(app: ^App) {
 	if app.modal == .Settings {
 		settings_on_close(app) // Audio-Tests stoppen, Gerätelisten freigeben
 	}
+	was_crop := app.modal == .Avatar_Crop
 	app.modal = .None
 	app.ui.focus = .Message
 	app.ui.tab_focus = 0
 	app.ui.tab_nav = false
+	if was_crop {
+		avatar_crop_cleanup(app)
+		// Der Editor kam aus den Einstellungen → dorthin zurück
+		if app.av_return_settings {
+			app.av_return_settings = false
+			open_settings(app)
+		}
+	}
 }
 
 // Overlay + zentriertes Panel mit Öffnungs-Animation. Gibt Panel-Rect zurück.
@@ -123,7 +136,10 @@ draw_modals :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 		draw_members_modal(app, c, sw, sh)
 
 	case .Settings:
-		draw_settings_modal(app, sw, sh)
+		draw_settings_modal(app, c, sw, sh)
+
+	case .Avatar_Crop:
+		draw_avatar_crop_modal(app, c, sw, sh)
 
 	case .Admin:
 		draw_admin_modal(app, c, sw, sh)
@@ -209,7 +225,7 @@ draw_members_modal :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 			online = u.online
 			in_call = u.in_call
 		}
-		draw_avatar(app, seed, p.x + 24, y + 7, 30, presence = true, online = online)
+		draw_avatar(app, seed, p.x + 24, y + 7, 30, presence = true, online = online, c = c, uid = mid)
 		name_x := p.x + 66
 		draw_text(app.fonts.regular15, tcstr(label), {name_x, y + 13}, 15, 0, COL_TEXT)
 		nw := rl.MeasureTextEx(app.fonts.regular15, tcstr(label), 15, 0).x
@@ -240,7 +256,7 @@ draw_members_modal :: proc(app: ^App, c: ^Server_Conn, sw, sh: f32) {
 				continue
 			}
 			label := u.display_name != "" ? u.display_name : u.username
-			draw_avatar(app, u.username, p.x + 24, y + 7, 30, presence = true, online = u.online)
+			draw_avatar(app, u.username, p.x + 24, y + 7, 30, presence = true, online = u.online, c = c, uid = u.id)
 			draw_text(app.fonts.regular15, tcstr(label), {p.x + 66, y + 13}, 15, 0, COL_TEXT)
 			if button(app, {p.x + p.width - 124, y + 7, 100, 30}, "Einladen", .Modal, id_salt = u.id ~ 0x1E) {
 				conn_request(c, {kind = shared.K_INVITE, channel_id = cs.ch.id, user_id = u.id}, {channel_id = cs.ch.id, user_id = u.id})

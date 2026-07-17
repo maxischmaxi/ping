@@ -585,7 +585,7 @@ adm_tab_users :: proc(app: ^App, c: ^Server_Conn, area: rl.Rectangle) {
 		info := adm_user_info(c, u.id)
 		visible := y + row_h > area.y && y < area.y + area.height
 		if visible {
-			draw_avatar(app, u.username, x, y + 10, 34, presence = true, online = u.online)
+			draw_avatar(app, u.username, x, y + 10, 34, presence = true, online = u.online, c = c, uid = u.id)
 			label := u.display_name != "" ? u.display_name : u.username
 			name_col := info.disabled ? COL_TEXT_FAINT : COL_TEXT
 			draw_text(app.fonts.bold15, tcstr(label), {x + 46, y + 10}, 15, 0, name_col)
