@@ -271,8 +271,12 @@ jobs:
           $libs = "$env:GITHUB_WORKSPACE\winlibs"
           # /SUBSYSTEM:windows + /ENTRY:mainCRTStartup: GUI app, no console
           # window pops up, but Odin's normal `main` entry is kept.
+          # /FORCE:MULTIPLE: raylib defines its own CloseWindow (rcore.obj),
+          # which collides with the Win32 CloseWindow pulled in via
+          # core:sys/windows; the linker keeps raylib's real definition and
+          # we never call the Win32 one.
           odin build src/client -out:bin/flurfunk.exe -o:speed `
-            -extra-linker-flags:"/LIBPATH:$libs /SUBSYSTEM:windows /ENTRY:mainCRTStartup"
+            -extra-linker-flags:"/LIBPATH:$libs /SUBSYSTEM:windows /ENTRY:mainCRTStartup /FORCE:MULTIPLE"
           if ($LASTEXITCODE -ne 0) { throw "odin build failed ($LASTEXITCODE)" }
           if (-not (Test-Path bin/flurfunk.exe)) { throw "no flurfunk.exe produced" }
       - name: Smoke (startet und -version kehrt sauber zurück)
